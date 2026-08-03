@@ -1,0 +1,19 @@
+import { Theme } from "../theme.slint";
+
+// Connection-status indicator shown on every server row and card.
+//
+// `status` mirrors the tag produced by `ConnectionStatus::as_tag` in `src/model.rs`;
+// anything unrecognised renders as disconnected, so a new state can never paint an
+// alarming colour by accident.
+export component StatusDot inherits Rectangle {
+    in property <string> status: "disconnected";
+    in property <length> diameter: 8px;
+
+    width: root.diameter;
+    height: root.diameter;
+    border-radius: root.diameter / 2;
+    background: root.status == "connected" ? Theme.success
+        : root.status == "connecting" ? Theme.warning
+        : root.status == "error" ? Theme.destructive
+        : Theme.muted-fg;
+}

@@ -1,0 +1,21 @@
+// View-model types crossing the Rust ↔ Slint boundary.
+//
+// These are deliberately *not* the domain types: `src/model.rs` owns those (typed port,
+// enums, validation). The controller flattens a domain `ServerProfile` into a `ServerRow`
+// of display-ready strings, so the UI never re-derives business meaning from raw fields.
+
+export struct ServerRow {
+    // Stable identity assigned by the store; survives filtering and deletion, so callbacks
+    // can address a server by id instead of by a list position that shifts underneath them.
+    id: int,
+    name: string,
+    // Pre-rendered "host:port".
+    endpoint: string,
+    // Pre-rendered "user · database".
+    detail: string,
+    // "prod" | "staging" | "dev" — drives the colour tag.
+    env: string,
+    // "connected" | "connecting" | "error" | "disconnected".
+    status: string,
+    tls: bool,
+}

@@ -1,0 +1,41 @@
+import { Theme, Metrics } from "../theme.slint";
+
+// Small tinted pill for environment tags, TLS markers, and type badges.
+//
+// The caller supplies the tone; the fill and outline are derived from it so a badge always
+// stays legible against the surface it sits on regardless of the active theme.
+export component Badge inherits Rectangle {
+    in property <string> label;
+    in property <color> tone: Theme.muted-fg;
+
+    height: 17px;
+    horizontal-stretch: 0;
+    border-radius: Metrics.radius-sm;
+    border-width: 1px;
+    border-color: root.tone.with-alpha(0.35);
+    background: root.tone.with-alpha(0.13);
+
+    HorizontalLayout {
+        padding-left: 5px;
+        padding-right: 5px;
+
+        Text {
+            text: root.label;
+            color: root.tone;
+            font-size: Metrics.text-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Maps an environment tag ("prod" / "staging" / "dev") onto its colour so the mapping lives
+// in exactly one place instead of being repeated by every screen that shows a server.
+export component EnvBadge inherits Badge {
+    in property <string> env: "dev";
+
+    label: root.env;
+    tone: root.env == "prod" ? Theme.env-prod
+        : root.env == "staging" ? Theme.env-staging
+        : Theme.env-dev;
+}

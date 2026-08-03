@@ -1,0 +1,70 @@
+// NusaDB Studio — window shell (task G1). Palette ported from the design reference
+// `gui/desain/src/styles/theme.css` (dark theme). Navigator, query editor, and monitoring
+// are added in later G-tasks; this is the shell that proves the app runs & is themed.
+
+global Palette {
+    out property <color> background: #0D0E15;
+    out property <color> foreground: #C2CAE2;
+    out property <color> card: #12141E;
+    out property <color> border: #222540;
+    out property <color> primary: #6366F1;
+    out property <color> muted-fg: #56607E;
+}
+
+export component AppWindow inherits Window {
+    title: "NusaDB Studio";
+    preferred-width: 1100px;
+    preferred-height: 720px;
+    min-width: 720px;
+    min-height: 480px;
+    background: Palette.background;
+
+    HorizontalLayout {
+        // ── Navigator sidebar (multi-server tree lands in G3) ──
+        Rectangle {
+            width: 264px;
+            background: Palette.card;
+            HorizontalLayout {
+                alignment: end;
+                Rectangle { width: 1px; background: Palette.border; }
+            }
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                alignment: start;
+
+                Text {
+                    text: "NusaDB Studio";
+                    color: Palette.foreground;
+                    font-size: 15px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "SERVERS";
+                    color: Palette.muted-fg;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "+ New Server";
+                    color: Palette.primary;
+                    font-size: 13px;
+                }
+            }
+        }
+
+        // ── Main area (empty state until a connection exists) ──
+        Rectangle {
+            background: Palette.background;
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "Connect to a server to begin";
+                    color: Palette.muted-fg;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+}

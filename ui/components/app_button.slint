@@ -1,0 +1,57 @@
+import { Theme, Metrics } from "../theme.slint";
+
+// The one button in Studio. Named `AppButton` rather than `Button` so it never collides with
+// the widget of the same name in `std-widgets.slint`, whose platform styling would fight the
+// design tokens.
+//
+// Variants: "primary" (filled brand) · "danger" (filled destructive) · "secondary" (outlined)
+// · "ghost" (bare, for toolbar affordances).
+export component AppButton inherits Rectangle {
+    in property <string> label;
+    in property <string> variant: "primary";
+    in property <bool> enabled: true;
+    callback clicked();
+
+    property <bool> filled: root.variant == "primary" || root.variant == "danger";
+    property <color> tone: root.variant == "danger" ? Theme.destructive : Theme.primary;
+
+    height: Metrics.control-h;
+    border-radius: Metrics.radius;
+    border-width: root.variant == "secondary" ? 1px : 0px;
+    border-color: Theme.border;
+
+    background: !root.enabled ? Theme.muted
+        : root.filled ? (touch.pressed ? root.tone.darker(0.25)
+            : touch.has-hover ? root.tone.brighter(0.15)
+            : root.tone)
+        : (touch.pressed ? Theme.accent
+            : touch.has-hover ? Theme.sidebar-accent
+            : Colors.transparent);
+
+    animate background { duration: 90ms; }
+
+    HorizontalLayout {
+        alignment: center;
+        padding-left: Metrics.s3;
+        padding-right: Metrics.s3;
+
+        Text {
+            text: root.label;
+            color: !root.enabled ? Theme.muted-fg
+                : root.filled ? Theme.on-primary
+                : root.variant == "ghost" ? Theme.sidebar-fg
+                : Theme.foreground;
+            font-size: Metrics.text-md;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}

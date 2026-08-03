@@ -1,0 +1,23 @@
+# NusaDB Studio — standalone workspace (Plan 19).
+# Kept OUT of the engine workspace so the GUI's Slint/GPU deps don't bloat the engine
+# build/CI; the engine root excludes `gui/studio`. Consumes the native driver
+# `nusadb-libnusa` over the wire protocol (added in task G2).
+[workspace]
+
+[package]
+name = "nusadb-studio"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95.0"
+license = "Apache-2.0"
+description = "NusaDB Studio — native desktop database management GUI (Rust + Slint)"
+publish = false
+
+[dependencies]
+slint = "1"
+
+[build-dependencies]
+slint-build = "1"
+
+[lints.clippy]
+unwrap_used = "deny"
