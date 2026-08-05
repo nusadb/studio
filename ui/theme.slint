@@ -1,8 +1,9 @@
 // Design tokens — the single source of truth for every colour, size, and font in Studio.
 //
 // Values are ported 1:1 from the visual reference `gui/desain/src/styles/theme.css`
-// (`:root` = dark, `.light` = light). A view must NEVER hard-code a colour or a spacing
-// number: bind to `Theme.*` / `Metrics.*` instead, so a design iteration is a one-file edit.
+// (`:root` = dark, `.light` = light) and from the chrome measurements in
+// `gui/desain/src/app/App.tsx`. A view must NEVER hard-code a colour or a spacing number:
+// bind to `Theme.*` / `Metrics.*` instead, so a design iteration is a one-file edit.
 
 export global Theme {
     // The app-wide theme switch. Every colour below derives from it, so flipping this one
@@ -18,6 +19,8 @@ export global Theme {
     out property <color> accent: dark ? #1A1C30 : #E8E9FF;
     out property <color> input-bg: dark ? #181A28 : #F3F4FB;
     out property <color> switch-bg: dark ? #2A2D48 : #B8BCE0;
+    // Window chrome: top bar, activity rail, status bar, tree gutter (`--sidebar`).
+    out property <color> chrome: dark ? #0A0B11 : #EDEEF8;
     out property <color> sidebar: dark ? #0A0B11 : #EDEEF8;
     out property <color> sidebar-accent: dark ? #181A28 : #E0E2F4;
 
@@ -27,6 +30,8 @@ export global Theme {
     out property <color> sidebar-fg: dark ? #9BA3C0 : #3A3E60;
     out property <color> accent-fg: dark ? #818CF8 : #4F51D9;
     out property <color> on-primary: #FFFFFF;
+    // Line-number gutter in the SQL editor.
+    out property <color> gutter-fg: dark ? #3A3E58 : #9AA0C0;
 
     // ── Lines ────────────────────────────────────────────────────────────────
     out property <color> border: dark ? #222540 : #C8CCE4;
@@ -48,6 +53,28 @@ export global Theme {
     out property <color> env-prod: dark ? #F87171 : #EF4444;
     out property <color> env-staging: dark ? #FBBF24 : #D97706;
     out property <color> env-dev: dark ? #22D3EE : #0891B2;
+
+    // ── Object-tree entity colours ───────────────────────────────────────────
+    // One hue per node type, so a glance at the tree tells you what kind of object a row is.
+    out property <color> ent-server: dark ? #818CF8 : #4F51D9;
+    out property <color> ent-database: dark ? #22D3EE : #0891B2;
+    out property <color> ent-schema: dark ? #FBBF24 : #D97706;
+    out property <color> ent-group: dark ? #56607E : #5A6080;
+    out property <color> ent-table: dark ? #4ADE80 : #16A34A;
+    out property <color> ent-view: dark ? #60A5FA : #2563EB;
+    out property <color> ent-index: dark ? #9CDCFE : #0E7490;
+    out property <color> ent-sequence: dark ? #FB923C : #C2410C;
+    out property <color> ent-function: dark ? #A78BFA : #7C3AED;
+    out property <color> ent-policy: dark ? #F87171 : #DC2626;
+
+    // ── SQL syntax colours ───────────────────────────────────────────────────
+    out property <color> sql-keyword: dark ? #569CD6 : #1E5AA8;
+    out property <color> sql-ident: dark ? #9CDCFE : #0E6A8A;
+    out property <color> sql-string: dark ? #CE9178 : #A8442A;
+    out property <color> sql-comment: dark ? #608B4E : #4A7A2E;
+    out property <color> sql-number: dark ? #B5CEA8 : #3F7A2E;
+    out property <color> sql-cast: dark ? #4EC9B0 : #0F7B6C;
+    out property <color> sql-punct: dark ? #808080 : #6B7280;
 }
 
 export global Metrics {
@@ -65,8 +92,19 @@ export global Metrics {
     out property <length> radius: 5px;
     out property <length> radius-lg: 9px;
 
-    // Native-dense sizing: compact controls 28–32px, dense list rows 24–28px.
+    // ── Chrome geometry, measured from the reference layout ──────────────────
+    out property <length> topbar-h: 40px;
+    out property <length> rail-w: 44px;
+    out property <length> tree-w: 224px;
+    out property <length> inspector-w: 256px;
+    out property <length> statusbar-h: 24px;
+    out property <length> toolbar-h: 32px;
+
+    // Native-dense sizing: compact controls 24–30px, dense rows 19–26px.
     out property <length> control-h: 30px;
+    out property <length> control-sm-h: 24px;
+    out property <length> tree-row-h: 19px;
+    out property <length> grid-row-h: 22px;
     out property <length> row-h: 26px;
 
     // Type scale anchored on the sheet's 13px base.
@@ -75,6 +113,11 @@ export global Metrics {
     out property <length> text-md: 13px;
     out property <length> text-lg: 15px;
     out property <length> text-xl: 18px;
+    // The SQL editor and data cells sit between sm and md in the reference.
+    out property <length> text-code: 12px;
+
+    // Indentation added per level of the object tree.
+    out property <length> tree-indent: 13px;
 
     // A missing family falls back to the platform default, so an unbundled font degrades
     // gracefully rather than failing to render.

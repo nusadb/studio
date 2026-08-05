@@ -1,0 +1,393 @@
+import { Theme } from "../theme.slint";
+
+// The icon set, drawn as vector paths on a 16×16 grid.
+//
+// The glyphs are authored here rather than imported from an icon library: Studio ships no
+// image assets and no icon font, so an icon costs nothing at build time and scales with the
+// window. Shapes are deliberately simple — at 12–17px on screen, silhouette is all that reads.
+//
+// Adding one: append an `if root.name == "…"` branch. Keep every path inside the 2…14 band so
+// icons optically align with each other.
+export component Icon inherits Rectangle {
+    in property <string> name;
+    in property <color> tint: Theme.muted-fg;
+    in property <length> size: 14px;
+
+    width: root.size;
+    height: root.size;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+
+    // Every glyph shares this geometry; only `commands` differs.
+    // ── Object types ─────────────────────────────────────────────────────────
+    if root.name == "server": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 2.5 3 L 13.5 3 L 13.5 7 L 2.5 7 Z M 2.5 9 L 13.5 9 L 13.5 13 L 2.5 13 Z M 4.3 5 L 5.6 5 M 4.3 11 L 5.6 11";
+    }
+
+    if root.name == "database": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 3 4 C 3 2.4 13 2.4 13 4 C 13 5.6 3 5.6 3 4 M 3 4 L 3 12 C 3 13.6 13 13.6 13 12 L 13 4 M 3 8 C 3 9.6 13 9.6 13 8";
+    }
+
+    if root.name == "schema": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 2 12.5 L 2 3.5 L 6 3.5 L 7.5 5.5 L 14 5.5 L 14 12.5 Z";
+    }
+
+    if root.name == "group": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 2.5 12.5 L 2.5 4.5 L 6 4.5 L 7.3 6.3 L 13.5 6.3 L 13.5 12.5 Z";
+    }
+
+    if root.name == "table": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 2.5 3.5 L 13.5 3.5 L 13.5 12.5 L 2.5 12.5 Z M 2.5 6.5 L 13.5 6.5 M 2.5 9.5 L 13.5 9.5 M 6.5 6.5 L 6.5 12.5 M 10 6.5 L 10 12.5";
+    }
+
+    if root.name == "view": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 1.5 8 C 4 4.2 12 4.2 14.5 8 C 12 11.8 4 11.8 1.5 8 Z M 6.4 8 C 6.4 5.9 9.6 5.9 9.6 8 C 9.6 10.1 6.4 10.1 6.4 8";
+    }
+
+    if root.name == "index": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 6 2.5 L 4.6 13.5 M 11.4 2.5 L 10 13.5 M 2.6 6 L 13.2 6 M 2.2 10 L 12.8 10";
+    }
+
+    if root.name == "sequence": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 3 4 L 13 4 M 3 8 L 13 8 M 3 12 L 13 12";
+    }
+
+    if root.name == "function": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 6.2 3 C 4.2 3 4.8 7 3.2 8 C 4.8 9 4.2 13 6.2 13 M 9.8 3 C 11.8 3 11.2 7 12.8 8 C 11.2 9 11.8 13 9.8 13";
+    }
+
+    if root.name == "shield": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 8 2.5 L 13 4.5 L 13 8 C 13 11 10.5 13 8 13.5 C 5.5 13 3 11 3 8 L 3 4.5 Z";
+    }
+
+    if root.name == "network": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 8 2.6 C 6.7 2.6 6.7 5.4 8 5.4 C 9.3 5.4 9.3 2.6 8 2.6 Z M 4 10.6 C 2.7 10.6 2.7 13.4 4 13.4 C 5.3 13.4 5.3 10.6 4 10.6 Z M 12 10.6 C 10.7 10.6 10.7 13.4 12 13.4 C 13.3 13.4 13.3 10.6 12 10.6 Z M 7.4 5.4 L 4.6 10.6 M 8.6 5.4 L 11.4 10.6";
+    }
+
+    // ── Chrome & actions ─────────────────────────────────────────────────────
+    if root.name == "chevron-right": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.5px;
+        fill: Colors.transparent;
+        commands: "M 6 3.5 L 10.5 8 L 6 12.5";
+    }
+
+    if root.name == "chevron-down": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.5px;
+        fill: Colors.transparent;
+        commands: "M 3.5 6 L 8 10.5 L 12.5 6";
+    }
+
+    if root.name == "plus": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.4px;
+        fill: Colors.transparent;
+        commands: "M 8 3 L 8 13 M 3 8 L 13 8";
+    }
+
+    if root.name == "minus": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.4px;
+        fill: Colors.transparent;
+        commands: "M 3 8 L 13 8";
+    }
+
+    if root.name == "search": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.3px;
+        fill: Colors.transparent;
+        commands: "M 7 2.6 C 9.4 2.6 11.4 4.6 11.4 7 C 11.4 9.4 9.4 11.4 7 11.4 C 4.6 11.4 2.6 9.4 2.6 7 C 2.6 4.6 4.6 2.6 7 2.6 Z M 10.3 10.3 L 13.8 13.8";
+    }
+
+    if root.name == "refresh": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.3px;
+        fill: Colors.transparent;
+        commands: "M 13 8 C 13 10.8 10.8 13 8 13 C 5.2 13 3 10.8 3 8 C 3 5.2 5.2 3 8 3 C 10 3 11.7 4.2 12.5 5.9 M 12.6 2.6 L 12.6 6 L 9.2 6";
+    }
+
+    if root.name == "play": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        fill: root.tint;
+        commands: "M 5 3 L 13 8 L 5 13 Z";
+    }
+
+    if root.name == "stop": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        fill: root.tint;
+        commands: "M 4.5 4.5 L 11.5 4.5 L 11.5 11.5 L 4.5 11.5 Z";
+    }
+
+    if root.name == "selection": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.3px;
+        fill: Colors.transparent;
+        commands: "M 2.5 4 L 13.5 4 M 2.5 8 L 9.5 8 M 2.5 12 L 11.5 12";
+    }
+
+    if root.name == "code": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.4px;
+        fill: Colors.transparent;
+        commands: "M 6 4 L 2.5 8 L 6 12 M 10 4 L 13.5 8 L 10 12";
+    }
+
+    if root.name == "columns": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 2.5 3.5 L 13.5 3.5 L 13.5 12.5 L 2.5 12.5 Z M 6.5 3.5 L 6.5 12.5 M 10 3.5 L 10 12.5";
+    }
+
+    if root.name == "branch": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.3px;
+        fill: Colors.transparent;
+        commands: "M 4.5 3 L 4.5 13 M 4.5 7 L 9 7 C 10.6 7 11.5 6.1 11.5 4.5 L 11.5 3 M 11.5 9.5 L 11.5 13";
+    }
+
+    if root.name == "chart": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.6px;
+        fill: Colors.transparent;
+        commands: "M 3 13 L 3 8 M 6.5 13 L 6.5 3.5 M 10 13 L 10 9.5 M 13.5 13 L 13.5 6";
+    }
+
+    if root.name == "archive": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 2.5 3.5 L 13.5 3.5 L 13.5 6.3 L 2.5 6.3 Z M 3.6 6.3 L 3.6 13 L 12.4 13 L 12.4 6.3 M 6.4 9.2 L 9.6 9.2";
+    }
+
+    if root.name == "plug": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 6 2 L 6 5.5 M 10 2 L 10 5.5 M 3.8 5.5 L 12.2 5.5 L 12.2 8.4 C 12.2 10.7 10.3 12.6 8 12.6 C 5.7 12.6 3.8 10.7 3.8 8.4 Z M 8 12.6 L 8 14.5";
+    }
+
+    if root.name == "brain": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 5.2 4 C 3.2 4 3.2 6.8 5 7.6 C 3 8.4 3.4 12 6.2 12 M 10.8 4 C 12.8 4 12.8 6.8 11 7.6 C 13 8.4 12.6 12 9.8 12 M 8 3 L 8 13";
+    }
+
+    if root.name == "commit": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.3px;
+        fill: Colors.transparent;
+        commands: "M 2 8 L 5.4 8 M 10.6 8 L 14 8 M 8 5.4 C 6.6 5.4 5.4 6.6 5.4 8 C 5.4 9.4 6.6 10.6 8 10.6 C 9.4 10.6 10.6 9.4 10.6 8 C 10.6 6.6 9.4 5.4 8 5.4 Z";
+    }
+
+    if root.name == "undo": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.3px;
+        fill: Colors.transparent;
+        commands: "M 3 7 L 6.4 3.6 M 3 7 L 6.4 10.4 M 3 7 L 10 7 C 12.2 7 13.6 8.6 13.6 10.6 L 13.6 12.6";
+    }
+
+    if root.name == "clock": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.3px;
+        fill: Colors.transparent;
+        commands: "M 8 2.6 C 11 2.6 13.4 5 13.4 8 C 13.4 11 11 13.4 8 13.4 C 5 13.4 2.6 11 2.6 8 C 2.6 5 5 2.6 8 2.6 Z M 8 4.9 L 8 8.2 L 10.4 9.6";
+    }
+
+    if root.name == "bell": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 8 2.4 C 5.6 2.4 4.6 4.4 4.6 6.9 L 4.6 10 L 3.2 11.4 L 12.8 11.4 L 11.4 10 L 11.4 6.9 C 11.4 4.4 10.4 2.4 8 2.4 Z M 6.6 11.4 C 6.6 13.1 9.4 13.1 9.4 11.4";
+    }
+
+    if root.name == "settings": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 8 5.6 C 6.7 5.6 5.6 6.7 5.6 8 C 5.6 9.3 6.7 10.4 8 10.4 C 9.3 10.4 10.4 9.3 10.4 8 C 10.4 6.7 9.3 5.6 8 5.6 Z M 8 1.8 L 8 3.6 M 8 12.4 L 8 14.2 M 1.8 8 L 3.6 8 M 12.4 8 L 14.2 8 M 3.6 3.6 L 4.9 4.9 M 11.1 11.1 L 12.4 12.4 M 12.4 3.6 L 11.1 4.9 M 4.9 11.1 L 3.6 12.4";
+    }
+
+    if root.name == "sun": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 8 5.4 C 6.6 5.4 5.4 6.6 5.4 8 C 5.4 9.4 6.6 10.6 8 10.6 C 9.4 10.6 10.6 9.4 10.6 8 C 10.6 6.6 9.4 5.4 8 5.4 Z M 8 1.4 L 8 3.2 M 8 12.8 L 8 14.6 M 1.4 8 L 3.2 8 M 12.8 8 L 14.6 8 M 3.4 3.4 L 4.7 4.7 M 11.3 11.3 L 12.6 12.6 M 12.6 3.4 L 11.3 4.7 M 4.7 11.3 L 3.4 12.6";
+    }
+
+    if root.name == "moon": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.tint;
+        stroke-width: 1.2px;
+        fill: Colors.transparent;
+        commands: "M 12.6 9.6 C 11.8 11.1 10.2 12.1 8.4 12.1 C 5.8 12.1 3.7 10 3.7 7.4 C 3.7 5.6 4.7 4 6.2 3.2 C 6 3.7 5.9 4.3 5.9 4.9 C 5.9 7.7 8.2 10 11 10 C 11.6 10 12.1 9.9 12.6 9.6 Z";
+    }
+}

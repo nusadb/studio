@@ -1,0 +1,163 @@
+import { Theme, Metrics } from "../theme.slint";
+import { Icon } from "../components/icon.slint";
+
+// One destination in the rail.
+component RailButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> screen;
+    in property <string> active-screen;
+    in property <string> tooltip;
+    callback picked();
+
+    property <bool> active: root.screen == root.active-screen;
+
+    width: 34px;
+    height: 34px;
+    border-radius: Metrics.radius-sm;
+    background: root.active ? Theme.primary.with-alpha(0.15)
+        : touch.has-hover ? Theme.muted
+        : Colors.transparent;
+
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: root.icon;
+        tint: root.active ? Theme.primary : Theme.muted-fg;
+        size: 17px;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+}
+
+// Horizontal rule separating rail groups.
+component RailDivider inherits Rectangle {
+    height: 7px;
+    background: Colors.transparent;
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 3px;
+        width: 22px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+// Far-left icon rail: the app's primary navigation between whole screens.
+//
+// Screens that are not built yet are still listed: the rail is the map of where Studio is
+// going, and a missing entry would read as a feature that was dropped.
+export component ActivityBar inherits Rectangle {
+    in property <string> screen: "workspace";
+    callback pick(string);
+
+    // Pinned width. A bare `width` is advisory inside a layout — the parent may stretch or
+    // squeeze it — so the rail clamps itself with min/max instead.
+    min-width: Metrics.rail-w;
+    max-width: Metrics.rail-w;
+    background: Theme.chrome;
+
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        height: parent.height;
+        background: Theme.border;
+    }
+
+    VerticalLayout {
+        padding-top: Metrics.s2;
+        padding-bottom: Metrics.s2;
+        spacing: 2px;
+        alignment: start;
+
+        RailButton {
+            icon: "code";
+            screen: "workspace";
+            active-screen: root.screen;
+            picked => {
+                root.pick("workspace");
+            }
+        }
+
+        RailButton {
+            icon: "table";
+            screen: "datagrid";
+            active-screen: root.screen;
+            picked => {
+                root.pick("datagrid");
+            }
+        }
+
+        RailButton {
+            icon: "columns";
+            screen: "designer";
+            active-screen: root.screen;
+            picked => {
+                root.pick("designer");
+            }
+        }
+
+        RailButton {
+            icon: "branch";
+            screen: "explain";
+            active-screen: root.screen;
+            picked => {
+                root.pick("explain");
+            }
+        }
+
+        RailButton {
+            icon: "chart";
+            screen: "monitor";
+            active-screen: root.screen;
+            picked => {
+                root.pick("monitor");
+            }
+        }
+
+        RailDivider { }
+
+        RailButton {
+            icon: "shield";
+            screen: "roles";
+            active-screen: root.screen;
+            picked => {
+                root.pick("roles");
+            }
+        }
+
+        RailButton {
+            icon: "brain";
+            screen: "advanced";
+            active-screen: root.screen;
+            picked => {
+                root.pick("advanced");
+            }
+        }
+
+        RailButton {
+            icon: "archive";
+            screen: "backups";
+            active-screen: root.screen;
+            picked => {
+                root.pick("backups");
+            }
+        }
+
+        RailDivider { }
+
+        RailButton {
+            icon: "plug";
+            screen: "connections";
+            active-screen: root.screen;
+            picked => {
+                root.pick("connections");
+            }
+        }
+    }
+}

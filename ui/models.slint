@@ -1,8 +1,8 @@
 // View-model types crossing the Rust ↔ Slint boundary.
 //
-// These are deliberately *not* the domain types: `src/model.rs` owns those (typed port,
-// enums, validation). The controller flattens a domain `ServerProfile` into a `ServerRow`
-// of display-ready strings, so the UI never re-derives business meaning from raw fields.
+// These are deliberately *not* the domain types: `src/model.rs` owns those (typed enums,
+// validation). The controller flattens domain values into display-ready rows, so the UI never
+// re-derives business meaning from raw fields.
 
 export struct ServerRow {
     // Stable identity assigned by the store; survives filtering and deletion, so callbacks
@@ -18,4 +18,56 @@ export struct ServerRow {
     // "connected" | "connecting" | "error" | "disconnected".
     status: string,
     tls: bool,
+}
+
+// One visible line of the object tree.
+//
+// The tree is flattened in Rust rather than modelled as nested Slint components: a flat list
+// keeps rendering a single `for` loop and makes scrolling, selection, and keyboard traversal
+// ordinary list operations instead of recursive ones.
+export struct TreeRow {
+    // Unique across the whole tree, e.g. "srv:3" or "srv:3/databases".
+    id: string,
+    label: string,
+    // "server" | "database" | "schema" | "group" | "table" | "view" | "index" | "sequence" |
+    // "function" | "policy" | "network" | "hint" — picks the icon and its colour.
+    kind: string,
+    // Indent level; 0 is a server.
+    depth: int,
+    expandable: bool,
+    expanded: bool,
+    // Connection status, for server rows only.
+    status: string,
+    // Small trailing annotation, e.g. an index method.
+    badge: string,
+    // Read-only / system objects render at reduced opacity.
+    dimmed: bool,
+}
+
+// A labelled value in the right-hand inspector.
+export struct Property {
+    label: string,
+    value: string,
+    // Renders the value in the monospace face — used for endpoints, types, and DDL.
+    mono: bool,
+}
+
+// One coloured run inside a line of SQL, classified by `src/sql_highlight.rs`.
+export struct SqlToken {
+    text: string,
+    // "keyword" | "ident" | "string" | "comment" | "number" | "cast" | "punct" | "space"
+    kind: string,
+}
+
+// One line of the SQL editor, as a sequence of coloured runs. Concatenating the runs
+// reproduces the source line exactly, so drawing them side by side reproduces the code.
+export struct SqlLine {
+    tokens: [SqlToken],
+}
+
+// A result-grid column header.
+export struct GridColumn {
+    name: string,
+    // SQL type name shown beside the column name, e.g. "int" / "timestamptz".
+    kind: string,
 }

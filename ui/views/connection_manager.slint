@@ -1,0 +1,511 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { ServerRow } from "../models.slint";
+import { StatusDot } from "../components/status_dot.slint";
+import { Badge, EnvBadge } from "../components/badge.slint";
+import { AppButton } from "../components/app_button.slint";
+import { FormField } from "../components/form_field.slint";
+import { Toggle } from "../components/toggle.slint";
+
+// A saved server, rendered as a card in the list on the left of this screen.
+component ServerCard inherits Rectangle {
+    in property <ServerRow> server;
+    in property <bool> selected;
+    callback edit();
+    callback remove();
+
+    height: 78px;
+    border-radius: Metrics.radius;
+    border-width: 1px;
+    border-color: root.selected ? Theme.primary : Theme.border;
+    background: Theme.card;
+
+    HorizontalLayout {
+        padding: Metrics.s3;
+        spacing: Metrics.s3;
+
+        VerticalLayout {
+            spacing: Metrics.s1;
+            alignment: center;
+
+            HorizontalLayout {
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: center;
+
+                    StatusDot {
+                        status: root.server.status;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Text {
+                        text: root.server.name;
+                        color: Theme.foreground;
+                        font-size: Metrics.text-md;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                }
+
+                EnvBadge {
+                    env: root.server.env;
+                }
+
+                if root.server.tls: Badge {
+                    label: "TLS";
+                    tone: Theme.info;
+                }
+
+                Rectangle { }
+            }
+
+            Text {
+                text: root.server.endpoint;
+                color: Theme.foreground;
+                font-size: Metrics.text-sm;
+                font-family: Metrics.font-mono;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.server.detail;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-sm;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: Metrics.s1;
+            horizontal-stretch: 0;
+
+            AppButton {
+                label: "Edit";
+                variant: "secondary";
+                height: 26px;
+                width: 62px;
+                clicked => {
+                    root.edit();
+                }
+            }
+
+            AppButton {
+                label: "Remove";
+                variant: "ghost";
+                height: 26px;
+                width: 62px;
+                clicked => {
+                    root.remove();
+                }
+            }
+        }
+    }
+}
+
+// One selectable environment tag in the form.
+component EnvChip inherits Rectangle {
+    in property <string> env;
+    in property <bool> active;
+    callback picked();
+
+    property <color> tone: root.env == "prod" ? Theme.env-prod
+        : root.env == "staging" ? Theme.env-staging
+        : Theme.env-dev;
+
+    height: 24px;
+    border-radius: Metrics.radius-sm;
+    border-width: 1px;
+    border-color: root.active ? root.tone : Theme.border;
+    background: root.active ? root.tone.with-alpha(0.16)
+        : touch.has-hover ? Theme.muted
+        : Colors.transparent;
+
+    HorizontalLayout {
+        alignment: center;
+        padding-left: Metrics.s2;
+        padding-right: Metrics.s2;
+
+        Text {
+            text: root.env;
+            color: root.active ? root.tone : Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            font-weight: root.active ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+}
+
+// Inline result of the last "Test Connection" attempt.
+component ResultBanner inherits Rectangle {
+    in property <string> state;
+    in property <string> message;
+
+    property <color> tone: root.state == "ok" ? Theme.success
+        : root.state == "error" ? Theme.destructive
+        : root.state == "testing" ? Theme.warning
+        : Theme.info;
+
+    // Height comes from the inner layout rather than from `text.preferred-height`: reading a
+    // child's preferred size back into the parent's height is a binding loop.
+    vertical-stretch: 0;
+    border-radius: Metrics.radius;
+    border-width: 1px;
+    border-color: root.tone.with-alpha(0.4);
+    background: root.tone.with-alpha(0.12);
+
+    VerticalLayout {
+        padding: Metrics.s2;
+
+        Text {
+            text: root.message;
+            color: root.tone;
+            font-size: Metrics.text-sm;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// Centre pane: the Connection Manager (screen 1 of the design brief) — saved servers on the
+// left, the add/edit form on the right.
+export component ConnectionManager inherits Rectangle {
+    in property <[ServerRow]> servers;
+    in property <int> selected-id: -1;
+    in property <bool> editing: false;
+    in property <string> test-state: "idle";
+    in property <string> test-message;
+    in property <string> form-error;
+
+    in-out property <string> draft-name;
+    in-out property <string> draft-host;
+    in-out property <string> draft-port;
+    in-out property <string> draft-user;
+    in-out property <string> draft-password;
+    in-out property <string> draft-database;
+    in-out property <string> draft-env;
+    in-out property <bool> draft-tls;
+    in-out property <string> draft-ca-path;
+
+    callback edit(int);
+    callback remove(int);
+    callback save();
+    callback test();
+    callback reset();
+    // Raised whenever the user changes any field, so a stale test result can be retired.
+    callback draft-changed();
+
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    VerticalLayout {
+        // ── Screen header ────────────────────────────────────────────────────
+        Rectangle {
+            min-height: 52px;
+            max-height: 52px;
+            vertical-stretch: 0;
+            background: Theme.background;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                width: parent.width;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s5;
+                padding-right: Metrics.s5;
+                spacing: Metrics.s3;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 1px;
+
+                    Text {
+                        text: "Connection Manager";
+                        color: Theme.foreground;
+                        font-size: Metrics.text-lg;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        text: "Saved servers — many can stay connected at once.";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                    }
+                }
+
+                Rectangle { }
+            }
+        }
+
+        HorizontalLayout {
+            padding: Metrics.s5;
+            spacing: Metrics.s5;
+
+            // ── Saved-server list ────────────────────────────────────────────
+            VerticalLayout {
+                spacing: Metrics.s3;
+
+                Text {
+                    text: "SAVED SERVERS";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    font-weight: 600;
+                }
+
+                if root.servers.length == 0: Rectangle {
+                    border-radius: Metrics.radius;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.card;
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: Metrics.s2;
+
+                        Text {
+                            text: "No servers saved yet";
+                            color: Theme.foreground;
+                            font-size: Metrics.text-lg;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "Fill in the form to add the first one.\nDefaults point at a local engine on 127.0.0.1:5678.";
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-md;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                if root.servers.length > 0: cards := ScrollView {
+                    viewport-height: root.servers.length * 86px;
+
+                    VerticalLayout {
+                        width: cards.visible-width;
+                        spacing: Metrics.s2;
+                        alignment: start;
+
+                        for server[index] in root.servers: ServerCard {
+                            server: server;
+                            selected: server.id == root.selected-id;
+                            edit => {
+                                root.edit(server.id);
+                            }
+                            remove => {
+                                root.remove(server.id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Add / edit form ──────────────────────────────────────────────
+            Rectangle {
+                min-width: 300px;
+                max-width: 360px;
+                horizontal-stretch: 0;
+                border-radius: Metrics.radius;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.card;
+
+                VerticalLayout {
+                    padding: Metrics.s4;
+                    spacing: Metrics.s3;
+                    alignment: start;
+
+                    Text {
+                        text: root.editing ? "Edit server" : "New server";
+                        color: Theme.foreground;
+                        font-size: Metrics.text-lg;
+                        font-weight: 600;
+                    }
+
+                    FormField {
+                        label: "NAME";
+                        placeholder: "prod-jakarta";
+                        text <=> root.draft-name;
+                        edited => {
+                            root.draft-changed();
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Metrics.s2;
+
+                        FormField {
+                            label: "HOST";
+                            placeholder: "127.0.0.1";
+                            mono: true;
+                            text <=> root.draft-host;
+                            edited => {
+                                root.draft-changed();
+                            }
+                        }
+
+                        VerticalLayout {
+                            horizontal-stretch: 0;
+                            width: 84px;
+
+                            FormField {
+                                label: "PORT";
+                                placeholder: "5678";
+                                mono: true;
+                                text <=> root.draft-port;
+                                edited => {
+                                    root.draft-changed();
+                                }
+                            }
+                        }
+                    }
+
+                    FormField {
+                        label: "USER";
+                        placeholder: "nusa-root";
+                        text <=> root.draft-user;
+                        edited => {
+                            root.draft-changed();
+                        }
+                    }
+
+                    FormField {
+                        label: "PASSWORD";
+                        placeholder: "leave empty for trust-on-startup";
+                        password: true;
+                        text <=> root.draft-password;
+                        edited => {
+                            root.draft-changed();
+                        }
+                    }
+
+                    FormField {
+                        label: "DATABASE";
+                        placeholder: "nusadb";
+                        text <=> root.draft-database;
+                        edited => {
+                            root.draft-changed();
+                        }
+                    }
+
+                    Text {
+                        text: "ENVIRONMENT";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        font-weight: 600;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Metrics.s2;
+
+                        EnvChip {
+                            env: "prod";
+                            active: root.draft-env == "prod";
+                            picked => {
+                                root.draft-env = "prod";
+                                root.draft-changed();
+                            }
+                        }
+
+                        EnvChip {
+                            env: "staging";
+                            active: root.draft-env == "staging";
+                            picked => {
+                                root.draft-env = "staging";
+                                root.draft-changed();
+                            }
+                        }
+
+                        EnvChip {
+                            env: "dev";
+                            active: root.draft-env == "dev";
+                            picked => {
+                                root.draft-env = "dev";
+                                root.draft-changed();
+                            }
+                        }
+
+                        Rectangle { }
+                    }
+
+                    Toggle {
+                        label: "Use TLS";
+                        checked <=> root.draft-tls;
+                        toggled => {
+                            root.draft-changed();
+                        }
+                    }
+
+                    // Only meaningful with TLS on, and required then: the driver verifies the
+                    // server against this bundle, and there is no "trust anything" fallback.
+                    if root.draft-tls: FormField {
+                        label: "CA CERTIFICATE";
+                        placeholder: "/path/to/ca.pem";
+                        hint: "PEM bundle the server certificate is checked against.";
+                        mono: true;
+                        text <=> root.draft-ca-path;
+                        edited => {
+                            root.draft-changed();
+                        }
+                    }
+
+                    if root.form-error != "": ResultBanner {
+                        state: "error";
+                        message: root.form-error;
+                    }
+
+                    if root.test-state != "idle": ResultBanner {
+                        state: root.test-state;
+                        message: root.test-message;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Metrics.s2;
+
+                        AppButton {
+                            label: root.test-state == "testing" ? "Testing…" : "Test Connection";
+                            variant: "secondary";
+                            enabled: root.test-state != "testing";
+                            clicked => {
+                                root.test();
+                            }
+                        }
+
+                        AppButton {
+                            label: root.editing ? "Update" : "Save";
+                            variant: "primary";
+                            width: 84px;
+                            horizontal-stretch: 0;
+                            clicked => {
+                                root.save();
+                            }
+                        }
+                    }
+
+                    if root.editing: AppButton {
+                        label: "Cancel edit";
+                        variant: "ghost";
+                        clicked => {
+                            root.reset();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

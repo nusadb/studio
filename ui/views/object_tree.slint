@@ -1,0 +1,376 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { TreeRow } from "../models.slint";
+import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
+
+// One line of the tree. Indentation, the disclosure arrow, the type icon, and the trailing
+// status pill all live here so every level of the hierarchy lines up by construction.
+component TreeItem inherits Rectangle {
+    in property <TreeRow> node;
+    in property <bool> selected;
+    callback activated();
+    callback toggled();
+
+    // One hue per object kind — a glance at the colour says what sort of thing a row is.
+    property <color> tint: root.node.kind == "server" ? Theme.ent-server
+        : root.node.kind == "database" ? Theme.ent-database
+        : root.node.kind == "schema" ? Theme.ent-schema
+        : root.node.kind == "table" ? Theme.ent-table
+        : root.node.kind == "view" ? Theme.ent-view
+        : root.node.kind == "index" ? Theme.ent-index
+        : root.node.kind == "sequence" ? Theme.ent-sequence
+        : root.node.kind == "function" ? Theme.ent-function
+        : root.node.kind == "policy" ? Theme.ent-policy
+        : root.node.kind == "network" ? Theme.info
+        : Theme.ent-group;
+
+    property <color> status-tone: root.node.status == "connected" ? Theme.success
+        : root.node.status == "connecting" ? Theme.warning
+        : root.node.status == "error" ? Theme.destructive
+        : Theme.muted-fg;
+
+    height: Metrics.tree-row-h;
+    border-radius: Metrics.radius-sm;
+    opacity: root.node.dimmed ? 0.45 : 1.0;
+    background: root.selected ? Theme.primary.with-alpha(0.15)
+        : touch.has-hover ? Theme.muted
+        : Colors.transparent;
+
+    HorizontalLayout {
+        padding-left: 6px + root.node.depth * Metrics.tree-indent;
+        padding-right: Metrics.s2;
+        spacing: 3px;
+
+        // Disclosure arrow. Leaf rows keep the same 12px slot so their labels stay aligned
+        // with the labels of expandable siblings.
+        arrow := Rectangle {
+            width: 12px;
+            horizontal-stretch: 0;
+
+            if root.node.expandable: Icon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                name: root.node.expanded ? "chevron-down" : "chevron-right";
+                tint: Theme.muted-fg;
+                size: 10px;
+            }
+
+            if root.node.expandable: TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => {
+                    root.toggled();
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Icon {
+                name: root.node.kind == "hint" ? "chevron-right" : root.node.kind;
+                tint: root.node.kind == "server" ? root.status-tone : root.tint;
+                size: 12px;
+            }
+        }
+
+        // The label absorbs the spare width; without an explicit stretch the layout hands the
+        // slack to the status pill instead, which then swells across the row.
+        Text {
+            text: root.node.label;
+            color: root.selected ? Theme.primary
+                : root.node.kind == "hint" ? Theme.muted-fg
+                : Theme.foreground;
+            font-size: Metrics.text-sm;
+            font-weight: root.selected ? 500 : 400;
+            font-italic: root.node.kind == "hint";
+            vertical-alignment: center;
+            horizontal-alignment: left;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        if root.node.status != "" && root.node.kind == "server": Rectangle {
+            horizontal-stretch: 0;
+            height: 13px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: root.status-tone.with-alpha(0.3);
+            background: root.status-tone.with-alpha(0.1);
+
+            HorizontalLayout {
+                padding-left: 5px;
+                padding-right: 5px;
+
+                Text {
+                    text: root.node.status;
+                    color: root.status-tone;
+                    font-size: 9px;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        if root.node.badge != "": Text {
+            text: root.node.badge;
+            color: Theme.muted-fg;
+            font-size: 9px;
+            font-family: Metrics.font-mono;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.activated();
+        }
+    }
+}
+
+// Left pane: the unified multi-server navigator.
+//
+// Every connected server contributes its subtree to one list, which is the point of the pane —
+// the user works across servers without switching windows.
+export component ObjectTree inherits Rectangle {
+    in property <[TreeRow]> rows;
+    in property <string> selected-id;
+    in-out property <string> filter;
+    callback select(string);
+    callback toggle(string);
+    callback filter-changed(string);
+    callback new-server();
+    callback refresh();
+    callback collapse-all();
+
+    // Pinned width — see the note in `activity_bar.slint`.
+    min-width: Metrics.tree-w;
+    max-width: Metrics.tree-w;
+    background: Theme.sidebar;
+
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        height: parent.height;
+        background: Theme.border;
+    }
+
+    VerticalLayout {
+        // ── Toolbar ──────────────────────────────────────────────────────────
+        Rectangle {
+            min-height: Metrics.toolbar-h;
+            max-height: Metrics.toolbar-h;
+            vertical-stretch: 0;
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s2;
+                padding-right: Metrics.s1;
+                spacing: 0px;
+
+                Text {
+                    text: "SERVERS";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-weight: 600;
+                    letter-spacing: 0.6px;
+                    vertical-alignment: center;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        icon: "plus";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.new-server();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        icon: "refresh";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.refresh();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        icon: "minus";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.collapse-all();
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Search ───────────────────────────────────────────────────────────
+        Rectangle {
+            min-height: 32px;
+            max-height: 32px;
+            vertical-stretch: 0;
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            Rectangle {
+                x: Metrics.s2;
+                y: 5px;
+                width: parent.width - 2 * Metrics.s2;
+                height: 22px;
+                border-radius: Metrics.radius-sm;
+                background: Theme.muted;
+
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 5px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+
+                        Icon {
+                            name: "search";
+                            tint: Theme.muted-fg;
+                            size: 11px;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        search := TextInput {
+                            text <=> root.filter;
+                            font-size: Metrics.text-sm;
+                            color: Theme.foreground;
+                            selection-background-color: Theme.primary;
+                            selection-foreground-color: Theme.on-primary;
+                            single-line: true;
+                            edited => {
+                                root.filter-changed(search.text);
+                            }
+                        }
+                    }
+                }
+
+                if root.filter == "": Text {
+                    x: 22px;
+                    y: (parent.height - self.height) / 2;
+                    text: "Search objects…";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                }
+            }
+        }
+
+        // ── Tree ─────────────────────────────────────────────────────────────
+        list := ScrollView {
+            viewport-height: root.rows.length * Metrics.tree-row-h + Metrics.s2;
+
+            VerticalLayout {
+                width: list.visible-width;
+                padding-top: Metrics.s1;
+                padding-left: 2px;
+                padding-right: 2px;
+                alignment: start;
+
+                for entry[index] in root.rows: TreeItem {
+                    node: entry;
+                    selected: entry.id == root.selected-id;
+                    activated => {
+                        root.select(entry.id);
+                    }
+                    toggled => {
+                        root.toggle(entry.id);
+                    }
+                }
+            }
+        }
+
+        if root.rows.length == 0: Rectangle {
+            min-height: 60px;
+            max-height: 60px;
+            vertical-stretch: 0;
+
+            Text {
+                x: (parent.width - self.width) / 2;
+                y: Metrics.s4;
+                text: "No servers yet";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-sm;
+            }
+        }
+
+        // The reference closes the tree with an inline "New Server" affordance, below the last
+        // node rather than only in the toolbar.
+        Rectangle {
+            min-height: 26px;
+            max-height: 26px;
+            vertical-stretch: 0;
+            border-radius: Metrics.radius-sm;
+            background: add-touch.has-hover ? Theme.muted : Colors.transparent;
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s2;
+                spacing: 6px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Icon {
+                        name: "plus";
+                        tint: add-touch.has-hover ? Theme.foreground : Theme.muted-fg;
+                        size: 11px;
+                    }
+                }
+
+                Text {
+                    text: "New Server";
+                    color: add-touch.has-hover ? Theme.foreground : Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    vertical-alignment: center;
+                }
+            }
+
+            add-touch := TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => {
+                    root.new-server();
+                }
+            }
+        }
+    }
+}

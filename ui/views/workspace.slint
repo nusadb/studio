@@ -1,0 +1,547 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { SqlLine, GridColumn } from "../models.slint";
+import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
+
+// Height of one line in the editor. The gutter and the code column both use it, which is what
+// keeps the line numbers aligned with the lines they number.
+global Editor {
+    out property <length> line-h: 20px;
+    out property <length> gutter-w: 38px;
+}
+
+// A 1px vertical rule between toolbar groups.
+component Divider inherits VerticalLayout {
+    alignment: center;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        width: 1px;
+        height: 16px;
+        background: Theme.border;
+    }
+}
+
+// One segment of the breadcrumb that retargets a query without leaving the tab.
+component Crumb inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+
+    height: 22px;
+    horizontal-stretch: 0;
+    // Capped: a breadcrumb is a hint, and letting a long name grow the toolbar would push the
+    // inspector out of the row.
+    max-width: 96px;
+    border-radius: Metrics.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: touch.has-hover ? Theme.muted : Colors.transparent;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 4px;
+
+        VerticalLayout {
+            alignment: center;
+
+            Icon {
+                name: root.icon;
+                tint: Theme.muted-fg;
+                size: 10px;
+            }
+        }
+
+        Text {
+            text: root.label;
+            color: Theme.foreground;
+            font-size: Metrics.text-sm;
+            font-family: Metrics.font-mono;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        VerticalLayout {
+            alignment: center;
+
+            Icon {
+                name: "chevron-down";
+                tint: Theme.muted-fg;
+                size: 9px;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+    }
+}
+
+// One tab of the results panel.
+component ResultTab inherits Rectangle {
+    in property <string> label;
+    in property <string> id;
+    in property <string> active-id;
+    callback picked();
+
+    property <bool> active: root.id == root.active-id;
+
+    width: 74px;
+    horizontal-stretch: 0;
+    background: Colors.transparent;
+
+    Text {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        text: root.label;
+        color: root.active ? Theme.primary : (touch.has-hover ? Theme.foreground : Theme.muted-fg);
+        font-size: Metrics.text-sm;
+    }
+
+    // Active-tab underline, drawn on the panel's bottom edge.
+    Rectangle {
+        y: parent.height - 2px;
+        width: parent.width;
+        height: 2px;
+        background: root.active ? Theme.primary : Colors.transparent;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+}
+
+// Centre screen: the SQL workspace — editor on top, results below.
+export component Workspace inherits Rectangle {
+    in property <[SqlLine]> lines;
+    in property <[GridColumn]> columns;
+    in property <string> server-crumb: "—";
+    in property <string> database-crumb: "—";
+    in property <string> schema-crumb: "public";
+    in property <bool> connected: false;
+    in property <string> result-summary;
+    in-out property <string> result-tab: "results";
+
+    // Responsive tiers, decided by the window and passed in — see the note in `top_bar.slint`
+    // for why these are inputs rather than comparisons against this pane's own width.
+    // The breadcrumb goes first, then the secondary run actions.
+    in property <bool> roomy: true;
+    in property <bool> mid: true;
+
+    background: Theme.background;
+    // The centre pane must be free to shrink: any minimum it declares is added to the row's,
+    // and the row's minimum is what stops the window from getting smaller.
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    VerticalLayout {
+        // ── Editor toolbar ───────────────────────────────────────────────────
+        Rectangle {
+            min-height: Metrics.toolbar-h;
+            max-height: Metrics.toolbar-h;
+            vertical-stretch: 0;
+            background: Theme.card;
+            min-width: 0px;
+            clip: true;
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s2;
+                spacing: Metrics.s1;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Run";
+                        icon: "play";
+                        variant: "primary";
+                        size: "sm";
+                        enabled: root.connected;
+                    }
+                }
+
+                if root.mid: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Selection";
+                        icon: "selection";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.connected;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Explain";
+                        icon: "branch";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.connected;
+                    }
+                }
+
+                if root.mid: Divider { }
+
+                if root.mid: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Commit";
+                        icon: "commit";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: false;
+                    }
+                }
+
+                if root.mid: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Rollback";
+                        icon: "undo";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: false;
+                    }
+                }
+
+                Rectangle { }
+
+                // ── Target breadcrumb ────────────────────────────────────────
+                if root.roomy: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Crumb {
+                        label: root.server-crumb;
+                        icon: "server";
+                    }
+                }
+
+                if root.roomy: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Icon {
+                        name: "chevron-right";
+                        tint: Theme.muted-fg;
+                        size: 10px;
+                    }
+                }
+
+                if root.roomy: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Crumb {
+                        label: root.database-crumb;
+                        icon: "database";
+                    }
+                }
+
+                if root.roomy: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Icon {
+                        name: "chevron-right";
+                        tint: Theme.muted-fg;
+                        size: 10px;
+                    }
+                }
+
+                if root.roomy: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Crumb {
+                        label: root.schema-crumb;
+                        icon: "schema";
+                    }
+                }
+            }
+        }
+
+        // ── SQL editor ───────────────────────────────────────────────────────
+        // Sized by stretch factor rather than a fraction of the window: deriving a child's
+        // height from `root.height` inside a layout makes the height depend on the layout that
+        // depends on the height, which Slint reports as a binding loop.
+        Rectangle {
+            vertical-stretch: 44;
+            min-height: 72px;
+            background: Theme.background;
+            clip: true;
+
+            // Gutter and code sit in an explicit left-to-right layout. Placing them as free
+            // children of the Rectangle left their order to absolute coordinates, which put
+            // the line numbers on the wrong side of the code.
+            HorizontalLayout {
+                // ── Line-number gutter ───────────────────────────────────────
+                Rectangle {
+                    min-width: Editor.gutter-w;
+                    max-width: Editor.gutter-w;
+                    background: Theme.chrome;
+
+                    // `border-r border-border/60` — dimmer than a pane edge.
+                    Rectangle {
+                        x: parent.width - 1px;
+                        y: 0;
+                        width: 1px;
+                        height: parent.height;
+                        background: Theme.border.with-alpha(0.6);
+                    }
+
+                    VerticalLayout {
+                        padding-top: Metrics.s3;
+                        alignment: start;
+
+                        for line[index] in root.lines: Rectangle {
+                            height: Editor.line-h;
+
+                            Text {
+                                x: parent.width - self.width - 9px;
+                                y: (parent.height - self.height) / 2;
+                                text: index + 1;
+                                color: Theme.gutter-fg;
+                                font-size: Metrics.text-sm;
+                                font-family: Metrics.font-mono;
+                            }
+                        }
+                    }
+                }
+
+                // ── Code column ──────────────────────────────────────────────
+                code := ScrollView {
+                    viewport-height: root.lines.length * Editor.line-h + 2 * Metrics.s3;
+
+                    VerticalLayout {
+                        width: code.visible-width;
+                        padding-top: Metrics.s3;
+                        padding-left: Metrics.s3;
+                        alignment: start;
+
+                        // Each line is drawn as its coloured runs, laid side by side. The runs
+                        // include the whitespace between them, so the line reassembles exactly
+                        // and indentation survives.
+                        for line[index] in root.lines: Rectangle {
+                            height: Editor.line-h;
+
+                            HorizontalLayout {
+                                alignment: start;
+
+                                for token in line.tokens: Text {
+                                    text: token.text;
+                                    color: token.kind == "keyword" ? Theme.sql-keyword
+                                        : token.kind == "string" ? Theme.sql-string
+                                        : token.kind == "comment" ? Theme.sql-comment
+                                        : token.kind == "number" ? Theme.sql-number
+                                        : token.kind == "cast" ? Theme.sql-cast
+                                        : token.kind == "punct" ? Theme.sql-punct
+                                        : Theme.sql-ident;
+                                    font-size: Metrics.text-code;
+                                    font-family: Metrics.font-mono;
+                                    font-weight: token.kind == "keyword" ? 500 : 400;
+                                    font-italic: token.kind == "comment";
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Splitter ─────────────────────────────────────────────────────────
+        // `h-1 bg-border/60` in the reference: a seam, not a rule.
+        Rectangle {
+            min-height: 3px;
+            max-height: 3px;
+            vertical-stretch: 0;
+            background: Theme.border.with-alpha(0.6);
+        }
+
+        // ── Results panel ────────────────────────────────────────────────────
+        VerticalLayout {
+            vertical-stretch: 56;
+
+            Rectangle {
+                min-height: Metrics.toolbar-h;
+                max-height: Metrics.toolbar-h;
+                vertical-stretch: 0;
+                background: Theme.card;
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    width: parent.width;
+                    height: 1px;
+                    background: Theme.border;
+                }
+
+                HorizontalLayout {
+                    padding-left: Metrics.s2;
+                    padding-right: Metrics.s3;
+
+                    ResultTab {
+                        label: "Results";
+                        id: "results";
+                        active-id: root.result-tab;
+                        picked => {
+                            root.result-tab = "results";
+                        }
+                    }
+
+                    ResultTab {
+                        label: "JSON";
+                        id: "json";
+                        active-id: root.result-tab;
+                        picked => {
+                            root.result-tab = "json";
+                        }
+                    }
+
+                    ResultTab {
+                        label: "Messages";
+                        id: "messages";
+                        active-id: root.result-tab;
+                        picked => {
+                            root.result-tab = "messages";
+                        }
+                    }
+
+                    ResultTab {
+                        label: "EXPLAIN";
+                        id: "explain";
+                        active-id: root.result-tab;
+                        picked => {
+                            root.result-tab = "explain";
+                        }
+                    }
+
+                    Rectangle { }
+
+                    Text {
+                        text: root.result-summary;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+                }
+            }
+
+            // Column header — present even with no rows, so the grid reads as a grid rather
+            // than as a blank panel.
+            if root.result-tab == "results" && root.columns.length > 0: Rectangle {
+                min-height: Metrics.grid-row-h;
+                max-height: Metrics.grid-row-h;
+                vertical-stretch: 0;
+                background: Theme.chrome;
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    width: parent.width;
+                    height: 1px;
+                    background: Theme.border;
+                }
+
+                HorizontalLayout {
+                    padding-left: Metrics.s2;
+
+                    for column[index] in root.columns: Rectangle {
+                        width: 128px;
+                        horizontal-stretch: 0;
+
+                        Rectangle {
+                            x: parent.width - 1px;
+                            width: 1px;
+                            height: parent.height;
+                            background: Theme.border;
+                        }
+
+                        HorizontalLayout {
+                            padding-left: Metrics.s2;
+                            padding-right: Metrics.s2;
+                            spacing: 4px;
+
+                            Text {
+                                text: column.name;
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-sm;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: column.kind;
+                                color: Theme.muted-fg;
+                                font-size: 9px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 0;
+                                opacity: 0.6;
+                            }
+                        }
+                    }
+
+                    Rectangle { }
+                }
+            }
+
+            // Body. Every tab shows the same message until a query has actually run.
+            //
+            // The minimum is set explicitly: wrapped text reports a tall minimum height when
+            // the layout probes it at a narrow width, which would push the status bar off the
+            // bottom of the window.
+            Rectangle {
+                min-height: 60px;
+                clip: true;
+
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Metrics.s4;
+                    padding-right: Metrics.s4;
+                    spacing: Metrics.s2;
+
+                    Text {
+                        text: root.connected ? "No results yet — run a query."
+                            : "Not connected to a server.";
+                        color: Theme.foreground;
+                        font-size: Metrics.text-md;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Connect a server to run queries. The editor becomes editable in a later release.";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}

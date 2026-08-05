@@ -1,0 +1,56 @@
+import { Theme, Metrics } from "../theme.slint";
+
+// Single-line text input styled from the design tokens.
+//
+// Built on the primitive `TextInput` rather than the `LineEdit` widget so the field obeys the
+// NusaDB palette on every platform instead of inheriting the host style.
+export component TextField inherits Rectangle {
+    in property <string> placeholder;
+    in property <bool> password: false;
+    in property <bool> mono: false;
+    in-out property <string> text;
+    callback edited();
+    callback accepted();
+
+    height: Metrics.control-h;
+    background: Theme.input-bg;
+    border-radius: Metrics.radius;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.primary : Theme.border;
+
+    HorizontalLayout {
+        padding-left: Metrics.s2;
+        padding-right: Metrics.s2;
+
+        VerticalLayout {
+            alignment: center;
+
+            input := TextInput {
+                text <=> root.text;
+                font-size: Metrics.text-md;
+                font-family: root.mono ? Metrics.font-mono : Metrics.font-ui;
+                color: Theme.foreground;
+                selection-background-color: Theme.primary;
+                selection-foreground-color: Theme.on-primary;
+                single-line: true;
+                input-type: root.password ? InputType.password : InputType.text;
+                edited => {
+                    root.edited();
+                }
+                accepted => {
+                    root.accepted();
+                }
+            }
+        }
+    }
+
+    // Drawn above the input but event-transparent (no touch area), so clicking the hint still
+    // lands the caret in the field.
+    if root.text == "": Text {
+        x: Metrics.s2;
+        y: (parent.height - self.height) / 2;
+        text: root.placeholder;
+        color: Theme.muted-fg;
+        font-size: Metrics.text-md;
+    }
+}

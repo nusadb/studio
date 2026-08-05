@@ -1,70 +1,335 @@
-// NusaDB Studio — window shell (task G1). Palette ported from the design reference
-// `gui/desain/src/styles/theme.css` (dark theme). Navigator, query editor, and monitoring
-// are added in later G-tasks; this is the shell that proves the app runs & is themed.
+// NusaDB Studio — window shell.
+//
+// This file only composes: it owns the window chrome and the properties/callbacks the Rust
+// controller binds to, and delegates every pixel to a view. Screens land under `views/`,
+// reusable pieces under `components/`, and all colours/sizes come from `theme.slint`.
+//
+// The layout follows the three-pane native-IDE arrangement of the visual reference:
+//
+//   ┌──────────────────────── TopBar ────────────────────────┐
+//   │ rail │ object tree │      screen      │   inspector    │
+//   └─────────────────────── StatusBar ──────────────────────┘
 
-global Palette {
-    out property <color> background: #0D0E15;
-    out property <color> foreground: #C2CAE2;
-    out property <color> card: #12141E;
-    out property <color> border: #222540;
-    out property <color> primary: #6366F1;
-    out property <color> muted-fg: #56607E;
+import { Theme, Metrics } from "theme.slint";
+import { ServerRow, TreeRow, Property, SqlLine, SqlToken, GridColumn } from "models.slint";
+import { TopBar } from "views/top_bar.slint";
+import { ActivityBar } from "views/activity_bar.slint";
+import { ObjectTree } from "views/object_tree.slint";
+import { Inspector } from "views/inspector.slint";
+import { Workspace } from "views/workspace.slint";
+import { ConnectionManager } from "views/connection_manager.slint";
+import { StatusBar } from "views/status_bar.slint";
+
+// Stand-in for a rail destination whose screen has not been built yet. It says so plainly
+// rather than showing a blank pane, so the rail never looks broken.
+component ComingSoon inherits Rectangle {
+    in property <string> title;
+
+    // A screen must never dictate the window's minimum size — with several of them side by
+    // side as conditional siblings, their minimums add up and the window ends up unable to
+    // shrink, clipping the inspector and the status bar out of view.
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Metrics.s2;
+        padding-left: Metrics.s5;
+        padding-right: Metrics.s5;
+
+        Text {
+            text: root.title;
+            color: Theme.foreground;
+            font-size: Metrics.text-xl;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Not built yet — this screen is on the way.";
+            color: Theme.muted-fg;
+            font-size: Metrics.text-md;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
 }
+
+// Re-exported so the generated Rust bindings expose the row structs and the theme switch.
+export { ServerRow, TreeRow, Property, SqlLine, SqlToken, GridColumn, Theme }
 
 export component AppWindow inherits Window {
     title: "NusaDB Studio";
-    preferred-width: 1100px;
-    preferred-height: 720px;
-    min-width: 720px;
-    min-height: 480px;
-    background: Palette.background;
+    default-font-size: Metrics.text-md;
+    default-font-family: Metrics.font-ui;
+    background: Theme.background;
+    // Sized to open fully visible on a 1366x768 laptop panel — the common floor for a desktop
+    // tool. A preferred height taller than the screen pushes the status bar under the edge of
+    // the display, which reads as a missing status bar.
+    preferred-width: 1180px;
+    preferred-height: 680px;
+    min-width: 880px;
+    min-height: 520px;
 
-    HorizontalLayout {
-        // ── Navigator sidebar (multi-server tree lands in G3) ──
-        Rectangle {
-            width: 264px;
-            background: Palette.card;
-            HorizontalLayout {
-                alignment: end;
-                Rectangle { width: 1px; background: Palette.border; }
+    // ── Navigation (pure UI state, owned by the view) ────────────────────────
+    in-out property <string> screen: "workspace";
+
+    // ── Object tree ──────────────────────────────────────────────────────────
+    in property <[TreeRow]> tree-rows;
+    in property <string> selected-node;
+    in-out property <string> tree-filter;
+
+    // ── Inspector ────────────────────────────────────────────────────────────
+    in property <string> inspector-title;
+    in property <string> inspector-kind;
+    in property <[Property]> inspector-properties;
+
+    // ── Workspace ────────────────────────────────────────────────────────────
+    in property <[SqlLine]> sql-lines;
+    in property <[GridColumn]> grid-columns;
+    in property <string> server-crumb: "—";
+    in property <string> database-crumb: "—";
+    in property <string> schema-crumb: "public";
+    in property <string> result-summary;
+
+    // ── Connection state ─────────────────────────────────────────────────────
+    in property <bool> connected: false;
+    in property <string> connection-label: "No connection";
+    in property <string> connection-status: "disconnected";
+
+    // ── Status bar ───────────────────────────────────────────────────────────
+    in property <string> status-server: "no server";
+    in property <string> status-database: "—";
+    in property <string> status-rows: "0 rows";
+    in property <string> status-timing: "—";
+    in property <string> version: "0.1.0";
+
+    // ── Connection Manager screen ────────────────────────────────────────────
+    in property <[ServerRow]> servers;
+    in property <int> selected-id: -1;
+    in property <bool> editing: false;
+    in property <string> test-state: "idle";
+    in property <string> test-message;
+    in property <string> form-error;
+
+    in-out property <string> draft-name;
+    in-out property <string> draft-host;
+    in-out property <string> draft-port;
+    in-out property <string> draft-user;
+    in-out property <string> draft-password;
+    in-out property <string> draft-database;
+    in-out property <string> draft-env: "dev";
+    in-out property <bool> draft-tls;
+    in-out property <string> draft-ca-path;
+
+    // ── Intents raised by the UI ─────────────────────────────────────────────
+    callback filter-changed(string);
+    callback select-node(string);
+    callback toggle-node(string);
+    callback refresh-tree();
+    callback collapse-tree();
+    callback select-server(int);
+    callback edit-server(int);
+    callback remove-server(int);
+    callback save-server();
+    callback test-connection();
+    callback reset-form();
+    callback draft-changed();
+    // Raised on the UI thread once a connection attempt finishes, carrying the outcome as
+    // (state, message). The probe answers from a network task, so this is the hop back.
+    callback probe-finished(string, string);
+
+    // ── Responsive tiers ─────────────────────────────────────────────────────
+    //
+    // The window is the only place that may measure itself: a pane that picks its children
+    // from its own width creates a binding loop, because those children are what the width is
+    // computed from. Assigning from a `changed` handler is imperative, so it breaks the cycle;
+    // the defaults match the preferred window size, which is what the first frame uses.
+    // They start at the compact tier on purpose. Slint derives the window's minimum size from
+    // its content, so a toolbar that shows everything by default makes the window unable to
+    // shrink — on a smaller screen it is then clipped, taking the inspector and the status bar
+    // out of view. Starting small and widening once the real geometry arrives inverts that.
+    property <bool> mid: true;
+    property <bool> roomy: true;
+
+    changed width => {
+        // A resize can report a transient zero before the real geometry arrives; acting on it
+        // would strand the toolbars in their narrowest form.
+        if (root.width > 1px) {
+            // Thresholds account for what the toolbars share the row with: the rail (44),
+            // the tree (224) and the inspector (256) are 524px before the centre pane gets
+            // anything, so the full toolbar only fits well past that.
+            root.mid = root.width > 1000px;
+            root.roomy = root.width > 1200px;
+        }
+    }
+
+    // The Connection Manager owns its own tree-less layout, and the screens that are wide
+    // dashboards have nothing for the inspector to describe.
+    //
+    // The panes are not gated on width: rail + tree + centre-minimum + inspector comes to
+    // 804px, which always fits inside the window's own 960px minimum. Responsiveness happens
+    // inside the toolbars instead, where thinning the controls costs the user nothing.
+    property <bool> show-tree: root.screen != "connections";
+    property <bool> show-inspector: root.screen == "workspace"
+        || root.screen == "datagrid"
+        || root.screen == "designer"
+        || root.screen == "explain";
+
+    VerticalLayout {
+        TopBar {
+            connection-label: root.connection-label;
+            connection-status: root.connection-status;
+            connected: root.connected;
+            roomy: root.roomy;
+            mid: root.mid;
+            vertical-stretch: 0;
+            open-connections => {
+                root.screen = "connections";
             }
-            VerticalLayout {
-                padding: 14px;
-                spacing: 10px;
-                alignment: start;
-
-                Text {
-                    text: "NusaDB Studio";
-                    color: Palette.foreground;
-                    font-size: 15px;
-                    font-weight: 600;
-                }
-                Text {
-                    text: "SERVERS";
-                    color: Palette.muted-fg;
-                    font-size: 11px;
-                    font-weight: 600;
-                }
-                Text {
-                    text: "+ New Server";
-                    color: Palette.primary;
-                    font-size: 13px;
-                }
+            toggle-theme => {
+                Theme.dark = !Theme.dark;
             }
         }
 
-        // ── Main area (empty state until a connection exists) ──
-        Rectangle {
-            background: Palette.background;
-            VerticalLayout {
-                alignment: center;
-                Text {
-                    text: "Connect to a server to begin";
-                    color: Palette.muted-fg;
-                    font-size: 14px;
-                    horizontal-alignment: center;
+        HorizontalLayout {
+            ActivityBar {
+                screen: root.screen;
+                horizontal-stretch: 0;
+                pick(next) => {
+                    root.screen = next;
                 }
             }
+
+            if root.show-tree: ObjectTree {
+                rows: root.tree-rows;
+                selected-id: root.selected-node;
+                filter <=> root.tree-filter;
+                horizontal-stretch: 0;
+                select(id) => {
+                    root.select-node(id);
+                }
+                toggle(id) => {
+                    root.toggle-node(id);
+                }
+                filter-changed(text) => {
+                    root.filter-changed(text);
+                }
+                new-server => {
+                    root.screen = "connections";
+                    root.reset-form();
+                }
+                refresh => {
+                    root.refresh-tree();
+                }
+                collapse-all => {
+                    root.collapse-tree();
+                }
+            }
+
+            // Screen host.
+            //
+            // Every screen lives inside this one element rather than as a row of conditional
+            // siblings. A layout sizes its children from their position in the child list, and
+            // a long run of conditionals makes that mapping unreliable — the panes after them
+            // ended up with no width at all. One host keeps the row at four children, and each
+            // screen simply fills it.
+            host := VerticalLayout {
+
+                if root.screen == "workspace": Workspace {
+                    lines: root.sql-lines;
+                    columns: root.grid-columns;
+                    server-crumb: root.server-crumb;
+                    database-crumb: root.database-crumb;
+                    schema-crumb: root.schema-crumb;
+                    connected: root.connected;
+                    result-summary: root.result-summary;
+                    roomy: root.roomy;
+                    mid: root.mid;
+                }
+
+                if root.screen == "connections": ConnectionManager {
+                    servers: root.servers;
+                    selected-id: root.selected-id;
+                    editing: root.editing;
+                    test-state: root.test-state;
+                    test-message: root.test-message;
+                    form-error: root.form-error;
+                    draft-name <=> root.draft-name;
+                    draft-host <=> root.draft-host;
+                    draft-port <=> root.draft-port;
+                    draft-user <=> root.draft-user;
+                    draft-password <=> root.draft-password;
+                    draft-database <=> root.draft-database;
+                    draft-env <=> root.draft-env;
+                    draft-tls <=> root.draft-tls;
+                    draft-ca-path <=> root.draft-ca-path;
+                    edit(id) => {
+                        root.edit-server(id);
+                    }
+                    remove(id) => {
+                        root.remove-server(id);
+                    }
+                    save => {
+                        root.save-server();
+                    }
+                    test => {
+                        root.test-connection();
+                    }
+                    reset => {
+                        root.reset-form();
+                    }
+                    draft-changed => {
+                        root.draft-changed();
+                    }
+                }
+
+                if root.screen == "datagrid": ComingSoon {
+                    title: "Table Data Editor";
+                }
+
+                if root.screen == "designer": ComingSoon {
+                    title: "Object Designer";
+                }
+
+                if root.screen == "explain": ComingSoon {
+                    title: "EXPLAIN Plan";
+                }
+
+                if root.screen == "monitor": ComingSoon {
+                    title: "Fleet Monitoring";
+                }
+
+                if root.screen == "roles": ComingSoon {
+                    title: "Users & Security";
+                }
+
+                if root.screen == "advanced": ComingSoon {
+                    title: "Advanced SQL";
+                }
+
+                if root.screen == "backups": ComingSoon {
+                    title: "Backups & Branches";
+                }
+            }
+
+            if root.show-inspector: Inspector {
+                title: root.inspector-title;
+                kind: root.inspector-kind;
+                properties: root.inspector-properties;
+                horizontal-stretch: 0;
+            }
+        }
+
+        StatusBar {
+            status: root.connection-status;
+            server: root.status-server;
+            database: root.status-database;
+            rows: root.status-rows;
+            timing: root.status-timing;
+            version: "NusaDB Studio " + root.version;
+            vertical-stretch: 0;
         }
     }
 }

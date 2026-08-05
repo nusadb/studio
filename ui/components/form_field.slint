@@ -1,0 +1,41 @@
+import { Theme, Metrics } from "../theme.slint";
+import { TextField } from "text_field.slint";
+
+// A label stacked over a `TextField`, plus an optional inline hint used for validation
+// feedback. Keeping the pairing in one component is what stops the Connection Manager form
+// from drifting out of alignment field by field.
+export component FormField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <string> hint;
+    in property <bool> password: false;
+    in property <bool> mono: false;
+    in-out property <string> text;
+    callback edited();
+
+    spacing: Metrics.s1;
+
+    Text {
+        text: root.label;
+        color: Theme.muted-fg;
+        font-size: Metrics.text-sm;
+        font-weight: 600;
+    }
+
+    TextField {
+        text <=> root.text;
+        placeholder: root.placeholder;
+        password: root.password;
+        mono: root.mono;
+        edited => {
+            root.edited();
+        }
+    }
+
+    if root.hint != "": Text {
+        text: root.hint;
+        color: Theme.muted-fg;
+        font-size: Metrics.text-xs;
+        wrap: word-wrap;
+    }
+}

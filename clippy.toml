@@ -1,0 +1,7 @@
+# Tests may use `unwrap`/`expect` freely — a panic there is a failing test, which is the
+# intended outcome. Production code stays under `unwrap_used = "deny"` (see Cargo.toml),
+# mirroring the engine workspace's policy in the repo root `clippy.toml`.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+msrv = "1.95.0"

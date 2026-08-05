@@ -1,7 +1,5 @@
-# NusaDB Studio — standalone workspace (Plan 19).
-# Kept OUT of the engine workspace so the GUI's Slint/GPU deps don't bloat the engine
-# build/CI; the engine root excludes `gui/studio`. Consumes the native driver
-# `nusadb-libnusa` over the wire protocol (added in task G2).
+# NusaDB Studio — the desktop client, built and released on its own so its GPU and windowing
+# dependencies stay out of the engine's build.
 [workspace]
 
 [package]
@@ -15,6 +13,11 @@ publish = false
 
 [dependencies]
 slint = "1"
+# The reference client for the Nusa Wire Protocol, from the engine repository.
+nusadb-libnusa = { git = "https://github.com/nusadb/nusadb" }
+# The driver is async; Studio's event loop is not. A runtime on a worker thread bridges them —
+# no macros or timers needed, just somewhere for connection futures to run.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
 
 [build-dependencies]
 slint-build = "1"

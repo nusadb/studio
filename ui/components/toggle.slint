@@ -1,0 +1,47 @@
+import { Theme, Metrics } from "../theme.slint";
+
+// Labelled on/off switch (TLS, and future boolean connection options).
+export component Toggle inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <bool> checked;
+    callback toggled();
+
+    spacing: Metrics.s2;
+
+    track := Rectangle {
+        width: 34px;
+        height: 18px;
+        vertical-stretch: 0;
+        border-radius: 9px;
+        background: root.checked ? Theme.primary : Theme.switch-bg;
+        animate background { duration: 120ms; }
+
+        knob := Rectangle {
+            x: root.checked ? track.width - self.width - 2px : 2px;
+            y: 2px;
+            width: 14px;
+            height: 14px;
+            border-radius: 7px;
+            background: Colors.white;
+            animate x { duration: 120ms; easing: ease-out; }
+        }
+
+        TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => {
+                root.checked = !root.checked;
+                root.toggled();
+            }
+        }
+    }
+
+    VerticalLayout {
+        alignment: center;
+
+        Text {
+            text: root.label;
+            color: Theme.foreground;
+            font-size: Metrics.text-md;
+        }
+    }
+}

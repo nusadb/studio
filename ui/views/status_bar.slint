@@ -1,0 +1,142 @@
+import { Theme, Metrics } from "../theme.slint";
+import { Icon } from "../components/icon.slint";
+import { StatusDot } from "../components/status_dot.slint";
+
+// A dim pipe between status segments.
+component Sep inherits VerticalLayout {
+    alignment: center;
+    horizontal-stretch: 0;
+
+    Text {
+        text: "|";
+        color: Theme.border;
+        font-size: Metrics.text-sm;
+    }
+}
+
+// Bottom strip: the context of whatever is focused, per the design brief —
+// "prod-jakarta · nusadb · public · Idle · v0.1.0".
+export component StatusBar inherits Rectangle {
+    in property <string> status: "disconnected";
+    in property <string> server;
+    in property <string> database;
+    in property <string> rows;
+    in property <string> timing;
+    in property <string> version;
+
+    min-height: Metrics.statusbar-h;
+    max-height: Metrics.statusbar-h;
+    background: Theme.chrome;
+
+    // `border-t border-border`. See the note in `inspector.slint`: without an explicit `y`
+    // this hairline is centred vertically and lands in the middle of the bar.
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    HorizontalLayout {
+        padding-left: Metrics.s4;
+        padding-right: Metrics.s4;
+        spacing: Metrics.s3;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            StatusDot {
+                status: root.status;
+                diameter: 7px;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Text {
+                text: root.server;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+            }
+        }
+
+        Sep { }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Icon {
+                name: "database";
+                tint: Theme.muted-fg;
+                size: 9px;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Text {
+                text: root.database;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+            }
+        }
+
+        Sep { }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Text {
+                text: root.rows;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+            }
+        }
+
+        Sep { }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Icon {
+                name: "clock";
+                tint: Theme.muted-fg;
+                size: 9px;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Text {
+                text: root.timing;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+            }
+        }
+
+        Rectangle { }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Text {
+                text: root.version;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                opacity: 0.7;
+            }
+        }
+    }
+}
