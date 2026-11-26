@@ -35,7 +35,8 @@ export component Toggle inherits HorizontalLayout {
         }
     }
 
-    VerticalLayout {
+    // A switch with no label takes no room beside it (settings rows align it right).
+    if root.label != "": VerticalLayout {
         alignment: center;
 
         Text {

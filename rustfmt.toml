@@ -1,6 +1,5 @@
-# NusaDB Studio is a standalone Cargo workspace, so it carries its own formatting rules rather
-# than inheriting them: the repo-root `rustfmt.toml` moved out with the engine, and a lane whose
-# gate depends on a config in another repository is a gate that breaks without warning.
+# NusaDB Studio is a standalone Cargo workspace, so it carries its own formatting rules: a check
+# that depends on a config in another repository breaks without warning.
 #
 # Stable-channel options only — the nightly-only import options (`imports_granularity`,
 # `group_imports`) would emit a warning on every `cargo fmt` here. Import grouping is kept by

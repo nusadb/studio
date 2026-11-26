@@ -1,0 +1,66 @@
+// Keyboard shortcuts, one set of rules for every platform.
+//
+// Slint reports the macOS Command key as `control` and the macOS Control key as `meta`; on
+// Windows and Linux `control` is Ctrl and `meta` is the Windows / Super key. So `control` alone
+// is "the primary modifier" everywhere — ⌘ on a Mac, Ctrl elsewhere — and `meta` is never part
+// of a Studio shortcut on Windows or Linux, where the system owns that key.
+//
+// Letters are compared without case, so a shortcut still works with Caps Lock on or Shift held.
+
+export global Keys {
+    // Set from Rust at start-up.
+    in property <bool> mac;
+
+    // ⌘ / Ctrl held, without the system key.
+    public pure function primary(control: bool, meta: bool) -> bool {
+        return control && (root.mac || !meta);
+    }
+
+    // `text` is the letter `letter` (lower case given), in either case.
+    public pure function is(text: string, letter: string) -> bool {
+        return text == letter || text == letter.to-uppercase();
+    }
+
+    // Code completion: Control+Space on every platform (⌘Space is Spotlight on a Mac).
+    public pure function completion(text: string, control: bool, meta: bool) -> bool {
+        return text == " " && (root.mac ? meta : control && !meta);
+    }
+
+    // Replace: ⌘⌥F on a Mac (⌘H hides the application there), Ctrl+H elsewhere.
+    public pure function replace(text: string, control: bool, alt: bool, meta: bool) -> bool {
+        return root.mac
+            ? control && alt && (root.is(text, "f") || text == "ƒ")
+            : control && !meta && !alt && root.is(text, "h");
+    }
+
+    // A key press that types a character rather than triggering a shortcut. AltGr arrives as
+    // Ctrl+Alt on Windows, and Option composes characters on a Mac, so both still type.
+    public pure function types(text: string, control: bool, alt: bool, meta: bool) -> bool {
+        let modifier-ok = root.mac
+            ? !control && !meta
+            : !meta && (control == alt);
+        return modifier-ok && text.character-count == 1 && text >= " "
+            && text != Key.Delete && text != Key.Backspace;
+    }
+
+    // Labels for tooltips and hints, written the way each platform writes them.
+    out property <string> run: root.mac ? "⌘↩" : "Ctrl+Enter";
+    out property <string> apply: root.mac ? "⌘↩" : "Ctrl+Enter";
+    out property <string> new-tab: root.mac ? "⌘T" : "Ctrl+T";
+    out property <string> close-tab: root.mac ? "⌘W" : "Ctrl+W";
+    out property <string> open: root.mac ? "⌘O" : "Ctrl+O";
+    out property <string> save: root.mac ? "⌘S" : "Ctrl+S";
+    out property <string> save-as: root.mac ? "⇧⌘S" : "Ctrl+Shift+S";
+    out property <string> find: root.mac ? "⌘F" : "Ctrl+F";
+    out property <string> replace-label: root.mac ? "⌥⌘F" : "Ctrl+H";
+    out property <string> format: root.mac ? "⇧⌘F" : "Ctrl+Shift+F";
+    out property <string> complete: root.mac ? "⌃Space" : "Ctrl+Space";
+    out property <string> copy: root.mac ? "⌘C" : "Ctrl+C";
+    out property <string> paste: root.mac ? "⌘V" : "Ctrl+V";
+    out property <string> undo: root.mac ? "⌘Z" : "Ctrl+Z";
+    out property <string> redo: root.mac ? "⇧⌘Z" : "Ctrl+Y";
+    out property <string> select-all: root.mac ? "⌘A" : "Ctrl+A";
+    out property <string> run-all: root.mac ? "⇧⌘↩" : "Ctrl+Shift+Enter";
+    out property <string> next-match: "Enter";
+    out property <string> previous-match: root.mac ? "⇧↩" : "Shift+Enter";
+}

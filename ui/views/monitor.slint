@@ -1,0 +1,545 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { MonTile, MonDb, MonXact } from "../models.slint";
+import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
+import { Heading } from "designer.slint";
+
+// A figure with its recent history drawn under it.
+component Tile inherits Rectangle {
+    in property <MonTile> tile;
+
+    height: 112px;
+    min-width: 100px;
+    border-radius: Metrics.radius;
+    border-width: 1px;
+    border-color: root.tile.alert ? Theme.destructive.with-alpha(0.6) : Theme.border;
+    background: Theme.card;
+
+    VerticalLayout {
+        padding: Metrics.s3;
+        spacing: 2px;
+
+        Text {
+            text: root.tile.label;
+            color: Theme.muted-fg;
+            font-size: Metrics.text-xs;
+            font-weight: 600;
+            overflow: elide;
+        }
+
+        HorizontalLayout {
+            spacing: 4px;
+            alignment: start;
+
+            Text {
+                text: root.tile.value;
+                color: root.tile.alert ? Theme.destructive : Theme.foreground;
+                font-size: 22px;
+                font-weight: 600;
+                font-family: Metrics.font-mono;
+            }
+
+            Text {
+                text: root.tile.unit;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                vertical-alignment: bottom;
+            }
+        }
+
+        Text {
+            text: root.tile.sub;
+            color: Theme.muted-fg;
+            font-size: 10px;
+            overflow: elide;
+        }
+
+        Rectangle {
+            height: 30px;
+
+            if root.tile.path != "": Path {
+                width: parent.width;
+                height: parent.height;
+                viewbox-width: 200;
+                viewbox-height: 36;
+                commands: root.tile.path;
+                stroke: root.tile.alert ? Theme.destructive : Theme.primary;
+                stroke-width: 1.5px;
+                fill: Colors.transparent;
+            }
+
+            if root.tile.path == "": Text {
+                text: "collecting…";
+                color: Theme.gutter-fg;
+                font-size: 10px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component Panel inherits Rectangle {
+    in property <string> title;
+
+    border-radius: Metrics.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.card;
+}
+
+// Live health of one server, read from its Prometheus endpoint, plus the prepared transactions
+// of the database the navigator points at.
+export component MonitorView inherits Rectangle {
+    // "" (no server) | "no-endpoint" | "loading" | "error" | "ready"
+    in property <string> state;
+    in property <string> server;
+    in property <string> endpoint;
+    in property <string> error;
+    in property <bool> paused;
+    // The last scrape failed; the figures shown are from the one before.
+    in property <bool> stale;
+    in property <string> updated;
+    in property <[MonTile]> tiles;
+    in property <string> totals;
+    in property <[MonDb]> databases;
+    in property <string> backup-last;
+    in property <string> backup-detail;
+    in property <bool> backup-alert;
+    in property <[MonXact]> xacts;
+    in property <string> xacts-note;
+    in property <string> xacts-database;
+
+    callback toggle-pause();
+    callback edit-endpoint();
+    callback retry();
+    callback refresh-xacts();
+    callback xact(int, string);
+
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    if root.state != "ready": VerticalLayout {
+        alignment: center;
+        spacing: Metrics.s3;
+        padding: Metrics.s5;
+
+        HorizontalLayout {
+            alignment: center;
+
+            Icon {
+                name: "chart";
+                tint: Theme.muted-fg;
+                size: 22px;
+            }
+        }
+
+        Text {
+            text: root.state == "no-endpoint" ? "No metrics endpoint for " + root.server
+                : root.state == "loading" ? "Reading " + root.endpoint + "…"
+                : root.state == "error" ? "Could not read " + root.endpoint
+                : "Monitor";
+            color: Theme.foreground;
+            font-size: Metrics.text-md;
+            font-weight: 500;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: root.state == "no-endpoint"
+                ? "NusaDB serves its metrics over Prometheus when started with --metrics-listen (for example --metrics-listen 127.0.0.1:9100). Add that address to this server to watch connections, query and error rates, stopped databases and backups here."
+                : root.state == "error" ? root.error
+                : root.state == "loading" ? ""
+                : "Pick a server in the navigator to watch it.";
+            color: Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        if root.state == "no-endpoint" || root.state == "error": HorizontalLayout {
+            alignment: center;
+            spacing: Metrics.s2;
+
+            if root.state == "error": AppButton {
+                label: "Try again";
+                variant: "outline";
+                size: "sm";
+                clicked => {
+                    root.retry();
+                }
+            }
+
+            AppButton {
+                label: root.state == "error" ? "Edit endpoint…" : "Set metrics endpoint…";
+                variant: root.state == "error" ? "ghost" : "primary";
+                size: "sm";
+                clicked => {
+                    root.edit-endpoint();
+                }
+            }
+        }
+    }
+
+    if root.state == "ready": VerticalLayout {
+        // ── Header ───────────────────────────────────────────────────────────
+        Rectangle {
+            min-height: 40px;
+            max-height: 40px;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Icon {
+                        name: "chart";
+                        tint: Theme.primary;
+                        size: 15px;
+                    }
+                }
+
+                Text {
+                    text: "Monitor";
+                    color: Theme.foreground;
+                    font-size: Metrics.text-md;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Text {
+                    text: root.server;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Rectangle {
+                        height: 18px;
+                        width: live-text.preferred-width + 22px;
+                        border-radius: 9px;
+                        background: root.stale ? Theme.destructive.with-alpha(0.15) : root.paused ? Theme.muted : Theme.success.with-alpha(0.15);
+
+                        Rectangle {
+                            x: 8px;
+                            width: 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            background: root.stale ? Theme.destructive : root.paused ? Theme.muted-fg : Theme.success;
+                        }
+
+                        live-text := Text {
+                            x: 18px;
+                            text: root.stale ? "unreachable" : root.paused ? "paused" : "live · every 2 s";
+                            color: root.stale ? Theme.destructive : root.paused ? Theme.muted-fg : Theme.success;
+                            font-size: 10px;
+                        }
+                    }
+                }
+
+                Text {
+                    text: root.updated;
+                    color: root.stale ? Theme.destructive : Theme.gutter-fg;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Rectangle { }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: root.paused ? "Resume" : "Pause";
+                        icon: root.paused ? "play" : "stop";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.toggle-pause();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Endpoint…";
+                        tooltip: root.endpoint;
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.edit-endpoint();
+                        }
+                    }
+                }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            // Content follows the visible width instead of widening the screen.
+            viewport-width: self.visible-width;
+
+            VerticalLayout {
+                width: parent.visible-width;
+                alignment: start;
+                padding: Metrics.s3;
+                spacing: Metrics.s3;
+
+                // ── Tiles ────────────────────────────────────────────────────
+                HorizontalLayout {
+                    spacing: Metrics.s3;
+
+                    for t in root.tiles: Tile {
+                        tile: t;
+                    }
+                }
+
+                Text {
+                    text: root.totals;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                }
+
+                HorizontalLayout {
+                    spacing: Metrics.s3;
+                    alignment: stretch;
+
+                    // ── Databases ────────────────────────────────────────────
+                    Panel {
+                        horizontal-stretch: 1;
+                        min-height: 150px;
+
+                        VerticalLayout {
+                            alignment: start;
+                            padding: Metrics.s3;
+                            spacing: Metrics.s2;
+
+                            Heading {
+                                text: "DATABASES";
+                            }
+
+                            if root.databases.length == 0: Text {
+                                text: "None opened since the server started.";
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-sm;
+                            }
+
+                            for d in root.databases: HorizontalLayout {
+                                spacing: Metrics.s2;
+                                height: 22px;
+
+                                VerticalLayout {
+                                    alignment: center;
+
+                                    Rectangle {
+                                        width: 8px;
+                                        height: 8px;
+                                        border-radius: 4px;
+                                        background: d.stopped ? Theme.destructive : Theme.success;
+                                    }
+                                }
+
+                                Text {
+                                    text: d.name;
+                                    color: Theme.foreground;
+                                    font-size: Metrics.text-sm;
+                                    font-family: Metrics.font-mono;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 0;
+                                }
+
+                                Text {
+                                    text: d.stopped ? "STOPPED: restart the server" : "serving";
+                                    color: d.stopped ? Theme.destructive : Theme.muted-fg;
+                                    font-size: Metrics.text-xs;
+                                    vertical-alignment: center;
+                                    // A column of its own, whatever the name's length.
+                                    horizontal-alignment: right;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Backups ──────────────────────────────────────────────
+                    Panel {
+                        horizontal-stretch: 1;
+                        min-height: 150px;
+
+                        VerticalLayout {
+                            alignment: start;
+                            padding: Metrics.s3;
+                            spacing: Metrics.s2;
+
+                            Heading {
+                                text: "SCHEDULED BACKUPS";
+                            }
+
+                            Text {
+                                text: root.backup-last;
+                                color: root.backup-alert ? Theme.destructive : Theme.foreground;
+                                font-size: Metrics.text-sm;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: root.backup-detail;
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-xs;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                // ── Prepared transactions ────────────────────────────────────
+                Panel {
+                    min-height: 120px;
+
+                    VerticalLayout {
+                        alignment: start;
+                        padding: Metrics.s3;
+                        spacing: Metrics.s2;
+
+                        HorizontalLayout {
+                            spacing: Metrics.s2;
+                            height: 24px;
+
+                            Heading {
+                                text: "PREPARED TRANSACTIONS IN " + root.xacts-database;
+                                horizontal-stretch: 0;
+                            }
+
+                            Rectangle { }
+
+                            AppButton {
+                                label: "Refresh";
+                                icon: "refresh";
+                                variant: "ghost";
+                                size: "sm";
+                                horizontal-stretch: 0;
+                                clicked => {
+                                    root.refresh-xacts();
+                                }
+                            }
+                        }
+
+                        if root.xacts.length == 0: Text {
+                            text: root.xacts-note;
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                            wrap: word-wrap;
+                        }
+
+                        if root.xacts.length > 0: HorizontalLayout {
+                            height: 20px;
+
+                            Heading {
+                                text: "GID";
+                                width: 170px;
+                            }
+
+                            Heading {
+                                text: "PREPARED";
+                                width: 180px;
+                            }
+
+                            Heading {
+                                text: "OWNER";
+                                width: 110px;
+                            }
+
+                            Rectangle { }
+                        }
+
+                        for x[i] in root.xacts: HorizontalLayout {
+                            height: 30px;
+
+                            Text {
+                                text: x.gid;
+                                width: 170px;
+                                color: Theme.foreground;
+                                font-size: Metrics.text-sm;
+                                font-family: Metrics.font-mono;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: x.prepared;
+                                width: 180px;
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-xs;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: x.owner;
+                                width: 110px;
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-xs;
+                                font-family: Metrics.font-mono;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            Rectangle { }
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                AppButton {
+                                    label: "Commit…";
+                                    variant: "outline";
+                                    size: "sm";
+                                    clicked => {
+                                        root.xact(i, "COMMIT");
+                                    }
+                                }
+                            }
+
+                            Rectangle { width: Metrics.s1; }
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                AppButton {
+                                    label: "Roll back…";
+                                    variant: "ghost";
+                                    size: "sm";
+                                    clicked => {
+                                        root.xact(i, "ROLLBACK");
+                                    }
+                                }
+                            }
+                        }
+
+                    }
+                }
+
+            }
+        }
+    }
+}

@@ -1,0 +1,179 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { DetailSection } from "../models.slint";
+import { AppButton } from "../components/app_button.slint";
+
+// The body of one object-page tab: a full-width table, or a block of SQL with its actions.
+export component ObjectDetail inherits Rectangle {
+    // The active tab's content.
+    in property <DetailSection> section;
+    callback copy-code(string);
+    callback open-code(string);
+
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    VerticalLayout {
+        if root.section.code == "": VerticalLayout {
+            // Header and rows share one horizontal scroll, so wide tables stay aligned.
+            // Columns share the visible width in proportion to their weights, and long values
+            // wrap: nothing is cut off and nothing needs a sideways scroll.
+            ScrollView {
+                vertical-stretch: 1;
+                viewport-width: max(self.visible-width, root.section.min-width * 1px);
+
+                VerticalLayout {
+                    width: max(parent.visible-width, root.section.min-width * 1px);
+                    alignment: start;
+
+                    Rectangle {
+                        height: 30px;
+                        background: Theme.card;
+
+                        HorizontalLayout {
+                            padding-left: Metrics.s3;
+                            padding-right: Metrics.s3;
+                            spacing: Metrics.s3;
+
+                            for h[c] in root.section.headers: Text {
+                                horizontal-stretch: root.section.widths[c];
+                                preferred-width: root.section.widths[c] * 1px;
+                                min-width: root.section.widths[c] * 0.65px;
+                                text: h;
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-xs;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+
+                        Rectangle {
+                            y: parent.height - 1px;
+                            height: 1px;
+                            background: Theme.border;
+                        }
+                    }
+
+                    for row[r] in root.section.rows: Rectangle {
+                        background: Math.mod(r, 2) == 1 ? Theme.zebra : Colors.transparent;
+
+                        HorizontalLayout {
+                            padding-left: Metrics.s3;
+                            padding-right: Metrics.s3;
+                            padding-top: 6px;
+                            padding-bottom: 6px;
+                            spacing: Metrics.s3;
+
+                            for cell[c] in row.cells: Text {
+                                horizontal-stretch: root.section.widths[c];
+                                preferred-width: root.section.widths[c] * 1px;
+                                min-width: root.section.widths[c] * 0.65px;
+                                text: cell;
+                                color: c == 1 || (root.section.headers.length <= 2 && c == 0) ? Theme.foreground : Theme.sidebar-fg;
+                                font-size: Metrics.text-sm;
+                                font-family: Metrics.font-mono;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    if root.section.rows.length == 0: Text {
+                        x: Metrics.s3;
+                        height: 40px;
+                        text: root.section.empty;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            if root.section.note != "": Rectangle {
+                min-height: 30px;
+                background: Theme.card;
+
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    background: Theme.border;
+                }
+
+                HorizontalLayout {
+                    padding-left: Metrics.s3;
+                    padding-right: Metrics.s3;
+
+                    Text {
+                        text: root.section.note;
+                        color: Theme.muted-fg;
+                        font-size: 10px;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+
+        if root.section.code != "": VerticalLayout {
+            HorizontalLayout {
+                min-height: 36px;
+                max-height: 36px;
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s1;
+                alignment: end;
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Copy";
+                        icon: "copy";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.copy-code(root.section.code);
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Open in Query";
+                        icon: "open";
+                        tooltip: "Open this SQL in a new editor tab to run or change it";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.open-code(root.section.code);
+                        }
+                    }
+                }
+            }
+
+            Flickable {
+                vertical-stretch: 1;
+                viewport-height: max(self.height, code.preferred-height + 24px);
+                viewport-width: max(self.width, code.preferred-width + 24px);
+
+                code := TextInput {
+                    x: Metrics.s3;
+                    y: Metrics.s1;
+                    text: root.section.code;
+                    read-only: true;
+                    single-line: false;
+                    wrap: no-wrap;
+                    color: Theme.sql-ident;
+                    font-size: Metrics.text-sm;
+                    font-family: Metrics.font-mono;
+                    selection-background-color: Theme.primary.with-alpha(0.35);
+                    selection-foreground-color: Theme.foreground;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,151 @@
+import { Theme, Metrics } from "../theme.slint";
+import { AppButton } from "../components/app_button.slint";
+import { TextField } from "../components/text_field.slint";
+import { Checkbox } from "../components/checkbox.slint";
+
+// A small modal that asks for one name: a new database or schema, a table's new name, the name
+// of a copy. Enter confirms, Escape or a click outside cancels. An optional checkbox carries
+// one yes/no choice (for a copy: with its rows or not).
+export component PromptDialog inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> label: "Name";
+    in-out property <string> value;
+    in property <string> check-label;
+    in-out property <bool> checked;
+    in property <string> accept-label: "Create";
+    in property <string> error;
+    callback accept();
+    callback cancel();
+
+    background: #00000066;
+
+    TouchArea {
+        clicked => {
+            root.cancel();
+        }
+    }
+
+    // The card sits inside the scope so Escape typed in the name field reaches it too.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.cancel();
+                return EventResult.accept;
+            }
+            return EventResult.reject;
+        }
+
+
+        card := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2.4;
+            width: 420px;
+            height: body.preferred-height;
+            border-radius: Metrics.radius-lg;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.popover;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000055;
+
+            TouchArea { }
+
+            body := VerticalLayout {
+                padding: Metrics.s5;
+                spacing: Metrics.s3;
+
+                VerticalLayout {
+                    spacing: 3px;
+
+                    Text {
+                        text: root.title;
+                        color: Theme.foreground;
+                        font-size: Metrics.text-lg;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+
+                    if root.subtitle != "": Text {
+                        text: root.subtitle;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        wrap: word-wrap;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 4px;
+
+                    Text {
+                        text: root.label;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                    }
+
+                    field := TextField {
+                        text <=> root.value;
+                        mono: true;
+                        accepted => {
+                            root.accept();
+                        }
+                        init => {
+                            self.focus-input();
+                        }
+                    }
+
+                    if root.error != "": Text {
+                        text: root.error;
+                        color: Theme.destructive;
+                        font-size: Metrics.text-sm;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if root.check-label != "": HorizontalLayout {
+                    spacing: Metrics.s2;
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+
+                        Checkbox {
+                            checked: root.checked;
+                            toggled(on) => {
+                                root.checked = on;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.check-label;
+                        color: Theme.foreground;
+                        font-size: Metrics.text-sm;
+                        vertical-alignment: center;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Metrics.s2;
+                    alignment: end;
+
+                    AppButton {
+                        label: "Cancel";
+                        variant: "outline";
+                        clicked => {
+                            root.cancel();
+                        }
+                    }
+
+                    AppButton {
+                        label: root.accept-label;
+                        variant: "primary";
+                        clicked => {
+                            root.accept();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

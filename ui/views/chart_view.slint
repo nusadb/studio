@@ -1,0 +1,524 @@
+import { Theme, Metrics } from "../theme.slint";
+import { ChartBar, ChartPoint, ChartTick, ChartSlice } from "../models.slint";
+import { Select, Pill } from "../components/select.slint";
+import { AppButton } from "../components/app_button.slint";
+import { Tip } from "../components/tooltip.slint";
+
+component Label inherits Text {
+    color: Theme.muted-fg;
+    font-size: Metrics.text-sm;
+    vertical-alignment: center;
+}
+
+// The Chart tab of a query result: pick a kind and the columns; drawn from the rows already
+// fetched, nothing is re-run.
+export component ChartView inherits Rectangle {
+    in property <[string]> columns;
+    // "bar" | "line" | "scatter" | "histogram" | "pie"
+    in property <string> kind: "bar";
+    in property <int> x-col: -1;
+    // -1: count rows (bar / line / pie).
+    in property <int> y-col: -1;
+    // -1: one series.
+    in property <int> series-col: -1;
+    // "count" | "sum" | "avg" | "min" | "max"
+    in property <string> agg: "sum";
+    // "result" | "value" | "label"
+    in property <string> order: "result";
+    // -1: every category (up to 40).
+    in property <int> top: -1;
+    in property <[ChartBar]> bars;
+    in property <[ChartPoint]> points;
+    in property <[ChartSlice]> slices;
+    in property <[string]> legend;
+    // Join the points with a line per series (line chart).
+    in property <bool> joined;
+    in property <[ChartTick]> x-ticks;
+    in property <[ChartTick]> y-ticks;
+    in property <string> x-title;
+    in property <string> y-title;
+    in property <string> note;
+    // Which control changed ("kind", "x", "y", "series", "agg", "order", "top") and its value.
+    callback set(string, int, string);
+    callback export-svg();
+    callback copy-svg();
+    callback copy-data();
+
+    background: Theme.background;
+
+    property <bool> uses-y: root.kind != "histogram";
+    property <bool> grouped: root.kind == "bar" || root.kind == "line" || root.kind == "pie";
+    property <bool> uses-series: root.kind == "bar" || root.kind == "line" || root.kind == "scatter";
+    property <bool> ordered: root.kind == "bar" || root.kind == "pie";
+    property <bool> drawn: root.bars.length > 0 || root.points.length > 0 || root.slices.length > 0;
+    property <[string]> top-options: ["All", "Top 5", "Top 10", "Top 20"];
+    property <[int]> top-values: [-1, 5, 10, 20];
+
+    VerticalLayout {
+        // ── Controls: what to draw ───────────────────────────────────────────
+        Rectangle {
+            height: 44px;
+            background: Theme.card;
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s2;
+
+                for k in [
+                    { id: "bar", label: "Bar", tip: "Totals per group" },
+                    { id: "line", label: "Line", tip: "A trend along X, one line per series" },
+                    { id: "scatter", label: "Scatter", tip: "Two numbers per row" },
+                    { id: "histogram", label: "Histogram", tip: "How one number is distributed" },
+                    { id: "pie", label: "Pie", tip: "Shares of a whole" },
+                ]: VerticalLayout {
+                    alignment: center;
+
+                    Pill {
+                        label: k.label;
+                        tooltip: k.tip;
+                        on: root.kind == k.id;
+                        picked => {
+                            root.set("kind", -1, k.id);
+                        }
+                    }
+                }
+
+                Rectangle { width: Metrics.s2; }
+
+                Label {
+                    text: root.kind == "histogram" ? "Values" : root.kind == "pie" ? "Slices" : "X";
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Select {
+                        width: 120px;
+                        options: root.columns;
+                        selected: root.x-col;
+                        mono: true;
+                        picked(i) => {
+                            root.set("x", i, "");
+                        }
+                    }
+                }
+
+                if root.uses-y: Label {
+                    text: root.kind == "pie" ? "Size" : "Y";
+                }
+
+                if root.uses-y: VerticalLayout {
+                    alignment: center;
+
+                    Select {
+                        width: 120px;
+                        options: root.columns;
+                        selected: root.y-col;
+                        placeholder: root.grouped ? "count rows" : "Choose…";
+                        mono: true;
+                        picked(i) => {
+                            root.set("y", i, "");
+                        }
+                    }
+                }
+
+                if root.grouped && root.y-col >= 0: VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "close";
+                        tooltip: "Count rows instead of a Y column";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.set("y", -1, "");
+                        }
+                    }
+                }
+
+                if root.uses-series: Label {
+                    text: "Series";
+                }
+
+                if root.uses-series: VerticalLayout {
+                    alignment: center;
+
+                    Select {
+                        width: 120px;
+                        options: root.columns;
+                        selected: root.series-col;
+                        placeholder: "none";
+                        mono: true;
+                        picked(i) => {
+                            root.set("series", i, "");
+                        }
+                    }
+                }
+
+                if root.uses-series && root.series-col >= 0: VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "close";
+                        tooltip: "No series: one colour";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.set("series", -1, "");
+                        }
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "copy-all";
+                        tooltip: "Copy the numbers behind the chart (for a spreadsheet)";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.drawn;
+                        clicked => {
+                            root.copy-data();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "copy";
+                        tooltip: "Copy the chart as SVG";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.drawn;
+                        clicked => {
+                            root.copy-svg();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "download";
+                        tooltip: "Save the chart as an SVG image";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.drawn;
+                        clicked => {
+                            root.export-svg();
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+
+        // ── Controls: how to fold and order ──────────────────────────────────
+        if root.grouped: Rectangle {
+            height: 38px;
+            background: Theme.card;
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s2;
+
+                if root.y-col >= 0: Label {
+                    text: "Fold Y with";
+                }
+
+                if root.y-col >= 0: HorizontalLayout {
+                    spacing: 4px;
+
+                    for a in ["sum", "avg", "min", "max", "count"]: VerticalLayout {
+                        alignment: center;
+
+                        Pill {
+                            label: a;
+                            on: root.agg == a;
+                            picked => {
+                                root.set("agg", -1, a);
+                            }
+                        }
+                    }
+                }
+
+                if root.y-col < 0: Label {
+                    text: "Each group counts its rows. Pick a Y column to sum, average… it instead.";
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                if root.ordered: Label {
+                    text: "Order";
+                }
+
+                if root.ordered: VerticalLayout {
+                    alignment: center;
+
+                    Select {
+                        width: 130px;
+                        options: ["As returned", "Largest first", "By label"];
+                        selected: root.order == "value" ? 1 : root.order == "label" ? 2 : 0;
+                        picked(i) => {
+                            root.set("order", -1, i == 1 ? "value" : i == 2 ? "label" : "result");
+                        }
+                    }
+                }
+
+                if root.ordered: VerticalLayout {
+                    alignment: center;
+
+                    Select {
+                        width: 96px;
+                        options: root.top-options;
+                        selected: root.top == 5 ? 1 : root.top == 10 ? 2 : root.top == 20 ? 3 : 0;
+                        picked(i) => {
+                            root.set("top", root.top-values[i], "");
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+
+        // ── Plot and legend ─────────────────────────────────────────────────
+        HorizontalLayout {
+            vertical-stretch: 1;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                clip: true;
+
+                if !root.drawn: Text {
+                    text: root.note != "" ? root.note : "Pick a column to draw.";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                // Pie: a donut in the largest square that fits.
+                if root.slices.length > 0: Rectangle {
+                    property <length> size: min(parent.width, parent.height) - 32px;
+                    x: (parent.width - self.size) / 2;
+                    y: 16px;
+                    width: self.size;
+                    height: self.size;
+
+                    for s in root.slices: Path {
+                        width: parent.width;
+                        height: parent.height;
+                        viewbox-width: 200;
+                        viewbox-height: 200;
+                        commands: s.path;
+                        fill: Theme.series[Math.mod(s.series, 8)];
+                        stroke: Theme.background;
+                        stroke-width: 1.5px;
+                    }
+
+                    Text {
+                        x: (parent.width - self.preferred-width) / 2;
+                        y: (parent.height - self.preferred-height) / 2;
+                        text: root.y-title;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                    }
+                }
+
+                plot := Rectangle {
+                    property <length> left: 64px;
+                    property <length> bottom: 52px;
+                    x: self.left;
+                    y: 30px;
+                    width: parent.width - self.left - 24px;
+                    height: parent.height - self.bottom - 38px;
+                    visible: (root.bars.length > 0 || root.points.length > 0) && root.slices.length == 0;
+
+                    // Grid lines and Y labels.
+                    for t in root.y-ticks: Rectangle {
+                        y: (1 - t.at) * plot.height;
+                        height: 1px;
+                        background: Theme.border.with-alpha(0.7);
+
+                        Text {
+                            x: -self.preferred-width - 8px;
+                            y: -7px;
+                            text: t.label;
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-xs;
+                            font-family: Metrics.font-mono;
+                        }
+                    }
+
+                    // X labels.
+                    for t in root.x-ticks: Text {
+                        x: t.at * plot.width - min(self.preferred-width, 140px) / 2;
+                        y: plot.height + 8px;
+                        width: min(self.preferred-width, 140px);
+                        text: t.label;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-xs;
+                        overflow: elide;
+                    }
+
+                    // Axis line.
+                    Rectangle {
+                        y: plot.height;
+                        height: 1px;
+                        background: Theme.muted-fg.with-alpha(0.6);
+                    }
+
+                    for b in root.bars: Rectangle {
+                        x: b.x0 * plot.width;
+                        // Histogram bins touch; a 1 px gap keeps them apart.
+                        width: max(1px, (b.x1 - b.x0) * plot.width - (root.kind == "histogram" ? 1px : 0px));
+                        height: max(0px, b.h * plot.height);
+                        y: plot.height - (b.y0 + b.h) * plot.height;
+                        border-radius: 2px;
+                        background: bar-touch.has-hover ? Theme.series[Math.mod(b.series, 8)].darker(0.2) : Theme.series[Math.mod(b.series, 8)];
+
+                        bar-touch := TouchArea {
+                            changed has-hover => {
+                                if (self.has-hover) {
+                                    Tip.request(b.label + ": " + b.value, self.absolute-position.x + self.width / 2,
+                                        self.absolute-position.y);
+                                } else {
+                                    Tip.dismiss();
+                                }
+                            }
+                        }
+                    }
+
+                    // A line chart joins consecutive points of the same series with 2 px segments.
+                    if root.joined: Rectangle {
+                        for p[i] in root.points: Rectangle {
+                            property <bool> next-same: i + 1 < root.points.length && root.points[i + 1].series == p.series;
+                            property <length> dx: self.next-same ? (root.points[i + 1].x - p.x) * plot.width : 0px;
+                            property <length> dy: self.next-same ? (p.y - root.points[i + 1].y) * plot.height : 0px;
+                            visible: self.next-same;
+                            x: p.x * plot.width;
+                            y: (1 - p.y) * plot.height - 1px;
+                            width: sqrt(self.dx * self.dx / 1px / 1px + self.dy * self.dy / 1px / 1px) * 1px;
+                            height: 2px;
+                            background: Theme.series[Math.mod(p.series, 8)];
+                            transform-origin: { x: 0px, y: 1px };
+                            transform-rotation: atan2(self.dy / 1px, self.dx / 1px);
+                        }
+                    }
+
+                    for p in root.points: Rectangle {
+                        x: p.x * plot.width - 4px;
+                        y: (1 - p.y) * plot.height - 4px;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: dot-touch.has-hover ? Theme.foreground : Theme.series[Math.mod(p.series, 8)];
+                        opacity: root.kind == "scatter" ? 0.8 : 1;
+
+                        dot-touch := TouchArea {
+                            changed has-hover => {
+                                if (self.has-hover) {
+                                    Tip.request(p.label, self.absolute-position.x + 4px, self.absolute-position.y);
+                                } else {
+                                    Tip.dismiss();
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        x: (plot.width - self.preferred-width) / 2;
+                        y: plot.height + 28px;
+                        text: root.x-title;
+                        color: Theme.foreground;
+                        font-size: Metrics.text-sm;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        x: -plot.left + 4px;
+                        y: -26px;
+                        text: root.y-title;
+                        color: Theme.foreground;
+                        font-size: Metrics.text-sm;
+                        font-weight: 600;
+                    }
+                }
+
+                if root.note != "" && root.drawn: Text {
+                    x: parent.width - self.preferred-width - Metrics.s3;
+                    y: 6px;
+                    text: root.note;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                }
+            }
+
+            // Legend: one entry per series or slice.
+            if root.legend.length > 0 && root.drawn: Rectangle {
+                width: 190px;
+
+                VerticalLayout {
+                    padding: Metrics.s3;
+                    padding-top: 30px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    for name[i] in root.legend: HorizontalLayout {
+                        spacing: 8px;
+                        height: 18px;
+
+                        VerticalLayout {
+                            alignment: center;
+
+                            Rectangle {
+                                width: 10px;
+                                height: 10px;
+                                border-radius: 2px;
+                                background: Theme.series[Math.mod(i, 8)];
+                            }
+                        }
+
+                        Text {
+                            text: name;
+                            color: Theme.foreground;
+                            font-size: Metrics.text-sm;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+
+                            TouchArea {
+                                changed has-hover => {
+                                    if (self.has-hover) {
+                                        Tip.request(name, self.absolute-position.x + self.width / 2,
+                                            self.absolute-position.y + self.height);
+                                    } else {
+                                        Tip.dismiss();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

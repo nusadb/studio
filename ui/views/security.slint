@@ -1,0 +1,1395 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { SecRole, SecMember, SecGrantRow, SecTable, SecPolicy } from "../models.slint";
+import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
+import { Checkbox } from "../components/checkbox.slint";
+import { CellInput, Heading } from "designer.slint";
+
+// Widths of the privilege matrix, shared by its header and its rows.
+global Matrix {
+    out property <length> relation: 170px;
+    out property <length> cell: 70px;
+    out property <length> row-toggle: 60px;
+    out property <length> total: 12px + relation + 7 * cell + row-toggle + 12px;
+}
+
+// A tab in a strip: label, count, an underline when active.
+component Tab inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback picked();
+
+    width: text.preferred-width + 24px;
+
+    text := Text {
+        text: root.label;
+        color: root.active ? Theme.foreground : Theme.muted-fg;
+        font-size: Metrics.text-sm;
+        font-weight: root.active ? 600 : 400;
+    }
+
+    Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        background: root.active ? Theme.primary : Colors.transparent;
+    }
+
+    TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+}
+
+// A small pill that can be picked: the policy command and kind, a role to join.
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback picked();
+
+    height: 22px;
+    width: chip-text.preferred-width + 16px;
+    border-radius: 11px;
+    border-width: 1px;
+    border-color: root.on ? Theme.primary : touch.has-hover && root.enabled ? Theme.muted-fg : Theme.border;
+    background: root.on ? Theme.primary.with-alpha(0.16) : Colors.transparent;
+    opacity: root.enabled ? 1.0 : 0.5;
+
+    chip-text := Text {
+        text: root.label;
+        color: root.on ? Theme.accent-fg : Theme.sidebar-fg;
+        font-size: Metrics.text-xs;
+        font-family: Metrics.font-mono;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+}
+
+// A one-line input that reports Enter, for naming a new role.
+component NameField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    callback accepted(string);
+
+    height: 26px;
+    border-radius: Metrics.radius-sm;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.primary : Theme.border;
+    background: Theme.input-bg;
+
+    input := TextInput {
+        x: 6px;
+        width: parent.width - 12px;
+        height: parent.height;
+        vertical-alignment: center;
+        single-line: true;
+        text <=> root.text;
+        font-size: Metrics.text-sm;
+        font-family: Metrics.font-mono;
+        color: Theme.foreground;
+        selection-background-color: Theme.primary.with-alpha(0.35);
+        selection-foreground-color: Theme.foreground;
+        accepted => {
+            root.accepted(self.text);
+        }
+    }
+
+    if root.text == "": Text {
+        x: 6px;
+        height: parent.height;
+        vertical-alignment: center;
+        text: root.placeholder;
+        color: Theme.gutter-fg;
+        font-size: Metrics.text-sm;
+    }
+}
+
+// A labelled attribute switch with the line that says what it does.
+component Attribute inherits Rectangle {
+    in property <string> keyword;
+    in property <string> meaning;
+    in property <bool> on;
+    in property <bool> changed;
+    in property <bool> enabled;
+    callback toggled(bool);
+
+    height: 44px;
+    border-radius: Metrics.radius-sm;
+    background: root.changed ? Theme.warning.with-alpha(0.10) : Colors.transparent;
+
+    HorizontalLayout {
+        padding-left: Metrics.s2;
+        padding-right: Metrics.s2;
+        spacing: Metrics.s3;
+
+        VerticalLayout {
+            alignment: center;
+
+            Checkbox {
+                checked: root.on;
+                enabled: root.enabled;
+                toggled(on) => {
+                    root.toggled(on);
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.keyword;
+                color: Theme.foreground;
+                font-size: Metrics.text-sm;
+                font-family: Metrics.font-mono;
+            }
+
+            Text {
+                text: root.meaning;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+// One cell of the privilege matrix: clicking cycles none → granted → with grant option.
+component GrantCell inherits Rectangle {
+    in property <int> state;
+    in property <bool> changed;
+    in property <bool> enabled;
+    in property <string> privilege;
+    callback cycle();
+
+    width: Matrix.cell;
+    background: root.changed ? Theme.warning.with-alpha(0.14) : touch.has-hover && root.enabled ? Theme.muted : Colors.transparent;
+
+    HorizontalLayout {
+        alignment: center;
+        spacing: 4px;
+
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 16px;
+                height: 16px;
+                border-radius: Metrics.radius-sm;
+                border-width: 1px;
+                border-color: root.state > 0 ? Theme.primary : Theme.border;
+                background: root.state > 0 ? Theme.primary : Theme.input-bg;
+                opacity: root.enabled ? 1.0 : 0.45;
+
+                if root.state > 0: Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-width: 16;
+                    viewbox-height: 16;
+                    stroke: Theme.on-primary;
+                    stroke-width: 1.8px;
+                    fill: Colors.transparent;
+                    commands: "M 4 8.5 L 7 11.5 L 12 5";
+                }
+            }
+        }
+
+        if root.state == 2: Text {
+            text: "+grant";
+            color: Theme.accent-fg;
+            font-size: 10px;
+            font-family: Metrics.font-mono;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.cycle();
+        }
+    }
+}
+
+// Roles, memberships, table privileges and row-level security of one database, edited as a
+// set of changes whose SQL stays in view and runs in one transaction.
+export component SecurityView inherits Rectangle {
+    // "" (no database picked) | "loading" | "error" | "ready"
+    in property <string> state;
+    in property <string> error;
+    in property <string> target-label;
+    in property <string> notes;
+    in property <bool> roles-editable;
+    in property <bool> rls-editable;
+    // "roles" | "rls"
+    in-out property <string> tab: "roles";
+    // "attributes" | "membership" | "privileges"
+    in-out property <string> role-tab: "privileges";
+
+    in property <[SecRole]> roles;
+    in property <int> role-selected: -1;
+    in property <string> role-name;
+    in property <bool> role-pseudo;
+    in property <bool> role-new;
+    in property <bool> role-dropped;
+    // LOGIN, SUPERUSER, CREATEDB, CREATEROLE, INHERIT
+    in property <[bool]> flags;
+    in property <[bool]> flags-changed;
+    in property <[SecMember]> member-of;
+    in property <[string]> can-join;
+    in property <[string]> members;
+    in property <[string]> privileges;
+    in property <[SecGrantRow]> grants;
+
+    in property <[SecTable]> tables;
+    in property <int> table-selected: -1;
+    in property <string> table-label;
+    in property <bool> policy-allowed;
+    in property <string> policy-blocked;
+    in property <[SecPolicy]> policies;
+
+    in property <string> ddl;
+    in property <string> problem;
+    in property <bool> has-changes;
+    in property <bool> applying;
+
+    callback refresh();
+    callback revert();
+    callback apply();
+    callback select-role(int);
+    callback new-role(string);
+    callback drop-role();
+    callback flag(int, bool);
+    callback join(string);
+    callback leave(string);
+    callback admin(string, bool);
+    callback grant-cycle(int, int);
+    callback grant-row(int);
+    callback grant-column(int);
+    callback select-table(int);
+    callback rls(int, bool);
+    callback add-policy();
+    callback remove-policy(int);
+    callback policy-field(int, string, string);
+
+    property <string> draft-role;
+
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    if root.state != "ready": VerticalLayout {
+        alignment: center;
+        spacing: Metrics.s3;
+        padding: Metrics.s5;
+
+        HorizontalLayout {
+            alignment: center;
+
+            Icon {
+                name: "shield";
+                tint: Theme.muted-fg;
+                size: 22px;
+            }
+        }
+
+        Text {
+            text: root.state == "loading" ? "Reading roles and grants…"
+                : root.state == "error" ? "Could not read this database's security"
+                : "Roles and security";
+            color: Theme.foreground;
+            font-size: Metrics.text-md;
+            font-weight: 500;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: root.state == "error" ? root.error
+                : root.state == "loading" ? root.target-label
+                : "Pick a database in the navigator. NusaDB keeps roles, grants and policies inside each database, so this screen always shows one database.";
+            color: Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        if root.state == "error": HorizontalLayout {
+            alignment: center;
+
+            AppButton {
+                label: "Try again";
+                variant: "outline";
+                size: "sm";
+                clicked => {
+                    root.refresh();
+                }
+            }
+        }
+    }
+
+    if root.state == "ready": VerticalLayout {
+        // ── Header ───────────────────────────────────────────────────────────
+        Rectangle {
+            min-height: 40px;
+            max-height: 40px;
+            background: Theme.background;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Icon {
+                        name: "shield";
+                        tint: Theme.primary;
+                        size: 15px;
+                    }
+                }
+
+                Text {
+                    text: "Security";
+                    color: Theme.foreground;
+                    font-size: Metrics.text-md;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Text {
+                    text: root.target-label;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Rectangle { }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Reload";
+                        icon: "refresh";
+                        tooltip: "Read roles, grants and policies again (discards unapplied changes)";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: !root.applying;
+                        clicked => {
+                            root.refresh();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Revert";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.has-changes && !root.applying;
+                        clicked => {
+                            root.revert();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: root.applying ? "Applying…" : "Apply changes";
+                        tooltip: "Runs the SQL below in one transaction";
+                        variant: "primary";
+                        size: "sm";
+                        enabled: root.has-changes && root.problem == "" && !root.applying;
+                        clicked => {
+                            root.apply();
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Tabs ─────────────────────────────────────────────────────────────
+        HorizontalLayout {
+            min-height: 30px;
+            max-height: 30px;
+            padding-left: Metrics.s2;
+            alignment: start;
+
+            Tab {
+                label: "Roles & privileges";
+                active: root.tab == "roles";
+                picked => {
+                    root.tab = "roles";
+                }
+            }
+
+            Tab {
+                label: "Row-level security";
+                active: root.tab == "rls";
+                picked => {
+                    root.tab = "rls";
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+
+        // ── Roles & privileges ───────────────────────────────────────────────
+        if root.tab == "roles": HorizontalLayout {
+            vertical-stretch: 1;
+
+            // Role list
+            Rectangle {
+                width: 200px;
+                background: Theme.sidebar;
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    background: Theme.border;
+                }
+
+                VerticalLayout {
+                    padding: Metrics.s2;
+                    spacing: Metrics.s1;
+
+                    Heading {
+                        text: "ROLES IN THIS DATABASE";
+                        height: 20px;
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+
+                        VerticalLayout {
+                            alignment: start;
+
+                            for role[i] in root.roles: Rectangle {
+                                height: 40px;
+                                border-radius: Metrics.radius-sm;
+                                background: i == root.role-selected ? Theme.sidebar-accent
+                                    : role-touch.has-hover ? Theme.muted : Colors.transparent;
+
+                                role-touch := TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => {
+                                        root.select-role(i);
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: Metrics.s2;
+                                    padding-right: Metrics.s2;
+                                    spacing: Metrics.s2;
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 1px;
+
+                                        Text {
+                                            text: role.pseudo ? "PUBLIC" : role.name;
+                                            color: role.state == "dropped" ? Theme.muted-fg : Theme.foreground;
+                                            font-size: Metrics.text-sm;
+                                            font-family: Metrics.font-mono;
+                                            font-weight: i == root.role-selected ? 600 : 400;
+                                            overflow: elide;
+                                        }
+
+                                        Text {
+                                            text: role.detail;
+                                            color: Theme.muted-fg;
+                                            font-size: 10px;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    if role.state != "": VerticalLayout {
+                                        alignment: center;
+                                        horizontal-stretch: 0;
+
+                                        Rectangle {
+                                            height: 16px;
+                                            width: state-text.preferred-width + 10px;
+                                            border-radius: 8px;
+                                            background: role.state == "new" ? Theme.success.with-alpha(0.18)
+                                                : role.state == "dropped" ? Theme.destructive.with-alpha(0.18)
+                                                : Theme.warning.with-alpha(0.18);
+
+                                            state-text := Text {
+                                                text: role.state;
+                                                color: role.state == "new" ? Theme.success
+                                                    : role.state == "dropped" ? Theme.destructive
+                                                    : Theme.warning;
+                                                font-size: 10px;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.roles-editable: HorizontalLayout {
+                        spacing: Metrics.s1;
+                        height: 26px;
+
+                        NameField {
+                            text <=> root.draft-role;
+                            placeholder: "new_role_name";
+                            accepted(text) => {
+                                root.new-role(text);
+                                root.draft-role = "";
+                            }
+                        }
+
+                        AppButton {
+                            label: "Add";
+                            icon: "plus";
+                            variant: "outline";
+                            size: "sm";
+                            horizontal-stretch: 0;
+                            enabled: root.draft-role != "";
+                            clicked => {
+                                root.new-role(root.draft-role);
+                                root.draft-role = "";
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Logins and passwords come from the server's --auth-user list.";
+                        color: Theme.muted-fg;
+                        font-size: 10px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // Selected role
+            if root.role-selected < 0: VerticalLayout {
+                alignment: center;
+
+                Text {
+                    text: "Select a role to see its attributes, memberships and privileges.";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    horizontal-alignment: center;
+                }
+            }
+
+            if root.role-selected >= 0: VerticalLayout {
+                horizontal-stretch: 1;
+
+                HorizontalLayout {
+                    min-height: 44px;
+                    max-height: 44px;
+                    padding-left: Metrics.s3;
+                    padding-right: Metrics.s3;
+                    spacing: Metrics.s2;
+
+                    Text {
+                        text: root.role-pseudo ? "PUBLIC" : root.role-name;
+                        color: root.role-dropped ? Theme.muted-fg : Theme.foreground;
+                        font-size: Metrics.text-md;
+                        font-weight: 600;
+                        font-family: Metrics.font-mono;
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+
+                    Text {
+                        text: root.role-pseudo ? "every role: a grant here reaches everyone"
+                            : root.role-dropped ? "will be dropped, with its grants and memberships"
+                            : root.role-new ? "new, created when you apply" : "";
+                        color: root.role-dropped ? Theme.destructive : Theme.muted-fg;
+                        font-size: Metrics.text-xs;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle { }
+
+                    if !root.role-pseudo && root.roles-editable: VerticalLayout {
+                        alignment: center;
+
+                        AppButton {
+                            label: root.role-dropped ? "Keep role" : "Drop role…";
+                            variant: root.role-dropped ? "outline" : "ghost";
+                            size: "sm";
+                            enabled: !root.applying;
+                            clicked => {
+                                root.drop-role();
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    min-height: 30px;
+                    max-height: 30px;
+                    padding-left: Metrics.s2;
+                    alignment: start;
+
+                    Tab {
+                        label: "Table privileges";
+                        active: root.role-tab == "privileges";
+                        picked => {
+                            root.role-tab = "privileges";
+                        }
+                    }
+
+                    if !root.role-pseudo: Tab {
+                        label: "Attributes";
+                        active: root.role-tab == "attributes";
+                        picked => {
+                            root.role-tab = "attributes";
+                        }
+                    }
+
+                    if !root.role-pseudo: Tab {
+                        label: "Membership  " + root.member-of.length;
+                        active: root.role-tab == "membership";
+                        picked => {
+                            root.role-tab = "membership";
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+
+                // Attributes
+                if root.role-tab == "attributes" && !root.role-pseudo: ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        alignment: start;
+                        padding: Metrics.s3;
+                        spacing: 2px;
+
+                        if !root.roles-editable: Text {
+                            text: "Role attributes are visible to superusers only.";
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                            wrap: word-wrap;
+                        }
+
+                        if root.roles-editable: VerticalLayout {
+                        spacing: 2px;
+
+                        for a[i] in [
+                            { k: "LOGIN", m: "May open a session. The password is checked against the server's --auth-user list." },
+                            { k: "SUPERUSER", m: "Bypasses every grant, ownership check and row-level security policy." },
+                            { k: "CREATEDB", m: "May run CREATE SCHEMA and CREATE DATABASE." },
+                            { k: "CREATEROLE", m: "May create other roles." },
+                            { k: "INHERIT", m: "Uses the privileges of the roles it is a member of." },
+                        ]: Attribute {
+                            keyword: a.k;
+                            meaning: a.m;
+                            on: root.flags[i];
+                            changed: root.flags-changed[i];
+                            enabled: root.roles-editable && !root.role-dropped;
+                            toggled(on) => {
+                                root.flag(i, on);
+                            }
+                        }
+
+                        }
+                    }
+                }
+
+                // Membership
+                if root.role-tab == "membership" && !root.role-pseudo: ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        alignment: start;
+                        padding: Metrics.s3;
+                        spacing: Metrics.s2;
+
+                        Heading {
+                            text: "MEMBER OF";
+                        }
+
+                        if root.member-of.length == 0: Text {
+                            text: "Not a member of any role.";
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                        }
+
+                        for m in root.member-of: Rectangle {
+                            height: 32px;
+                            border-radius: Metrics.radius-sm;
+                            background: m.state != "" ? Theme.warning.with-alpha(0.10) : Theme.card;
+
+                            HorizontalLayout {
+                                padding-left: Metrics.s2;
+                                padding-right: Metrics.s2;
+                                spacing: Metrics.s3;
+
+                                Text {
+                                    text: m.role;
+                                    color: Theme.foreground;
+                                    font-size: Metrics.text-sm;
+                                    font-family: Metrics.font-mono;
+                                    vertical-alignment: center;
+                                    min-width: 160px;
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 0;
+
+                                    Checkbox {
+                                        checked: m.admin;
+                                        enabled: !root.role-dropped;
+                                        toggled(on) => {
+                                            root.admin(m.role, on);
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: "WITH ADMIN OPTION: may grant " + m.role + " to others";
+                                    color: Theme.muted-fg;
+                                    font-size: Metrics.text-xs;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 0;
+
+                                    AppButton {
+                                        label: "Leave";
+                                        variant: "ghost";
+                                        size: "sm";
+                                        enabled: !root.role-dropped;
+                                        clicked => {
+                                            root.leave(m.role);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.can-join.length > 0 && !root.role-dropped: Heading {
+                            text: "ADD TO A ROLE";
+                        }
+
+                        if root.can-join.length > 0 && !root.role-dropped: HorizontalLayout {
+                            alignment: start;
+                            spacing: Metrics.s1;
+
+                            for r in root.can-join: Chip {
+                                label: "+ " + r;
+                                picked => {
+                                    root.join(r);
+                                }
+                            }
+                        }
+
+                        Heading {
+                            text: "MEMBERS OF " + root.role-name;
+                        }
+
+                        Text {
+                            text: root.members.length == 0 ? "No role belongs to this one." : "";
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                            visible: root.members.length == 0;
+                        }
+
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: Metrics.s1;
+
+                            for r in root.members: Chip {
+                                label: r;
+                                enabled: false;
+                            }
+                        }
+
+                        Text {
+                            text: "A member uses this role's privileges when it has INHERIT, or after SET ROLE.";
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // Privilege matrix
+                if root.role-tab == "privileges": VerticalLayout {
+                    vertical-stretch: 1;
+
+                    // The header scrolls sideways with the grid, so a narrow window keeps
+                    // every column reachable without the header forcing the layout wider.
+                    Rectangle {
+                        min-height: 28px;
+                        max-height: 28px;
+                        background: Theme.card;
+
+                        Flickable {
+                            interactive: false;
+                            viewport-x: matrix.viewport-x;
+                            viewport-width: Matrix.total;
+
+                        HorizontalLayout {
+                            width: Matrix.total;
+                            height: parent.height;
+                            padding-left: Metrics.s3;
+
+                            Heading {
+                                text: "TABLE";
+                                width: Matrix.relation;
+                            }
+
+                            for p[c] in root.privileges: Rectangle {
+                                width: Matrix.cell;
+
+                                Text {
+                                    text: p;
+                                    color: col-touch.has-hover ? Theme.foreground : Theme.muted-fg;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                }
+
+                                col-touch := TouchArea {
+                                    enabled: !root.role-dropped;
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => {
+                                        root.grant-column(c);
+                                    }
+                                }
+                            }
+
+                            Heading {
+                                text: "ROW";
+                                width: Matrix.row-toggle;
+                                horizontal-alignment: center;
+                            }
+
+                            Rectangle { }
+                        }
+                        }
+                    }
+
+                    matrix := ScrollView {
+                        vertical-stretch: 1;
+                        viewport-width: max(self.visible-width, Matrix.total);
+
+                        VerticalLayout {
+                            alignment: start;
+
+                            for g[r] in root.grants: Rectangle {
+                                height: 30px;
+                                background: Math.mod(r, 2) == 1 ? Theme.zebra : Colors.transparent;
+
+                                HorizontalLayout {
+                                    padding-left: Metrics.s3;
+
+                                    HorizontalLayout {
+                                        width: Matrix.relation;
+                                        spacing: Metrics.s1;
+
+                                        VerticalLayout {
+                                            alignment: center;
+
+                                            Icon {
+                                                name: g.view ? "view" : "table";
+                                                tint: g.view ? Theme.ent-view : Theme.ent-table;
+                                                size: 13px;
+                                            }
+                                        }
+
+                                        Text {
+                                            text: g.relation;
+                                            color: Theme.foreground;
+                                            font-size: Metrics.text-sm;
+                                            font-family: Metrics.font-mono;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    for state[c] in g.cells: GrantCell {
+                                        state: state;
+                                        changed: g.changed[c];
+                                        enabled: !root.role-dropped;
+                                        cycle => {
+                                            root.grant-cycle(r, c);
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: Matrix.row-toggle;
+
+                                        row-text := Text {
+                                            text: "all / none";
+                                            color: row-touch.has-hover ? Theme.foreground : Theme.muted-fg;
+                                            font-size: 10px;
+                                        }
+
+                                        row-touch := TouchArea {
+                                            enabled: !root.role-dropped;
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => {
+                                                root.grant-row(r);
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle { }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: Metrics.s3;
+                        padding-right: Metrics.s3;
+                        height: 32px;
+
+                    Text {
+                        text: "Click a box to cycle: none, granted, with grant option. Click a column or row name to set all of it.";
+                        color: Theme.muted-fg;
+                        font-size: 10px;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    }
+                }
+            }
+        }
+
+        // ── Row-level security ───────────────────────────────────────────────
+        if root.tab == "rls": HorizontalLayout {
+            vertical-stretch: 1;
+
+            Rectangle {
+                width: 260px;
+                background: Theme.sidebar;
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    background: Theme.border;
+                }
+
+                VerticalLayout {
+                    padding: Metrics.s2;
+                    spacing: Metrics.s1;
+
+                    HorizontalLayout {
+                        height: 20px;
+
+                        Heading {
+                            text: "TABLE";
+                        }
+
+                        Heading {
+                            text: "RLS";
+                            width: 40px;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+
+                        VerticalLayout {
+                            alignment: start;
+
+                            for t[i] in root.tables: Rectangle {
+                                height: 34px;
+                                border-radius: Metrics.radius-sm;
+                                background: t.changed ? Theme.warning.with-alpha(0.10)
+                                    : i == root.table-selected ? Theme.sidebar-accent
+                                    : t-touch.has-hover ? Theme.muted : Colors.transparent;
+
+                                t-touch := TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => {
+                                        root.select-table(i);
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: Metrics.s2;
+                                    padding-right: Metrics.s1;
+                                    spacing: Metrics.s1;
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 1px;
+
+                                        Text {
+                                            text: t.label;
+                                            color: Theme.foreground;
+                                            font-size: Metrics.text-sm;
+                                            font-family: Metrics.font-mono;
+                                            font-weight: i == root.table-selected ? 600 : 400;
+                                            overflow: elide;
+                                        }
+
+                                        Text {
+                                            text: t.policies == 0 ? "no policy" : t.policies == 1 ? "1 policy" : t.policies + " policies";
+                                            color: Theme.muted-fg;
+                                            font-size: 10px;
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        alignment: center;
+                                        width: 40px;
+
+                                        HorizontalLayout {
+                                            alignment: center;
+
+                                            Checkbox {
+                                                checked: t.rls;
+                                                enabled: root.rls-editable;
+                                                toggled(on) => {
+                                                    root.rls(i, on);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "RLS on: a role sees and writes only the rows a policy lets it. A superuser bypasses policies.";
+                        color: Theme.muted-fg;
+                        font-size: 10px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            if root.table-selected < 0: VerticalLayout {
+                alignment: center;
+
+                Text {
+                    text: root.rls-editable ? "Select a table to see and edit its policies."
+                        : "Row-level security is kept in superuser-only catalogs: connect as a superuser to see or change it.";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            if root.table-selected >= 0: VerticalLayout {
+                horizontal-stretch: 1;
+
+                HorizontalLayout {
+                    min-height: 44px;
+                    max-height: 44px;
+                    padding-left: Metrics.s3;
+                    padding-right: Metrics.s3;
+                    spacing: Metrics.s2;
+
+                    Text {
+                        text: "Policies on " + root.table-label;
+                        color: Theme.foreground;
+                        font-size: Metrics.text-md;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+
+                    Rectangle { }
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        AppButton {
+                            label: "Add policy";
+                            icon: "plus";
+                            variant: "outline";
+                            size: "sm";
+                            tooltip: root.policy-blocked;
+                            enabled: root.policy-allowed && !root.applying;
+                            clicked => {
+                                root.add-policy();
+                            }
+                        }
+                    }
+                }
+
+                if root.policy-blocked != "": HorizontalLayout {
+                    padding-left: Metrics.s3;
+                    padding-right: Metrics.s3;
+
+                    Text {
+                        text: root.policy-blocked;
+                        color: Theme.warning;
+                        font-size: Metrics.text-xs;
+                        wrap: word-wrap;
+                    }
+                }
+
+                ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        alignment: start;
+                        padding: Metrics.s3;
+                        spacing: Metrics.s2;
+
+                        if root.policies.length == 0: Text {
+                            text: "No policy on this table.";
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                        }
+
+                        for p[i] in root.policies: Rectangle {
+                            height: 168px;
+                            border-radius: Metrics.radius;
+                            border-width: 1px;
+                            border-color: p.state == "new" ? Theme.success.with-alpha(0.6)
+                                : p.state == "changed" ? Theme.warning.with-alpha(0.6) : Theme.border;
+                            background: Theme.card;
+
+                            VerticalLayout {
+                                padding: Metrics.s2;
+                                spacing: 6px;
+
+                                HorizontalLayout {
+                                    spacing: Metrics.s2;
+                                    height: 26px;
+
+                                    Heading {
+                                        text: "NAME";
+                                        width: 70px;
+                                    }
+
+                                    Rectangle {
+                                        width: 220px;
+                                        border-radius: Metrics.radius-sm;
+                                        border-width: 1px;
+                                        border-color: Theme.border;
+
+                                        CellInput {
+                                            width: parent.width;
+                                            text: p.name;
+                                            placeholder: "policy_name";
+                                            edited(text) => {
+                                                root.policy-field(i, "name", text);
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle { }
+
+                                    VerticalLayout {
+                                        alignment: center;
+
+                                        AppButton {
+                                            label: "Drop";
+                                            variant: "ghost";
+                                            size: "sm";
+                                            tooltip: "Drop this policy when you apply";
+                                            clicked => {
+                                                root.remove-policy(i);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: Metrics.s1;
+                                    height: 22px;
+                                    alignment: start;
+
+                                    Heading {
+                                        text: "FOR";
+                                        width: 70px + Metrics.s1;
+                                    }
+
+                                    for c in ["ALL", "SELECT", "INSERT", "UPDATE", "DELETE"]: Chip {
+                                        label: c;
+                                        on: p.command == c;
+                                        picked => {
+                                            root.policy-field(i, "command", c);
+                                        }
+                                    }
+
+                                    Rectangle { width: Metrics.s3; }
+
+                                    Chip {
+                                        label: "PERMISSIVE";
+                                        on: p.permissive;
+                                        picked => {
+                                            root.policy-field(i, "kind", "permissive");
+                                        }
+                                    }
+
+                                    Chip {
+                                        label: "RESTRICTIVE";
+                                        on: !p.permissive;
+                                        picked => {
+                                            root.policy-field(i, "kind", "restrictive");
+                                        }
+                                    }
+                                }
+
+                                for f in [
+                                    { id: "roles", label: "TO", hint: "PUBLIC for every role, or names such as analyst, readers" },
+                                    { id: "using", label: "USING", hint: "rows it may see, e.g. owner = current_user" },
+                                    { id: "check", label: "WITH CHECK", hint: "rows it may write, e.g. amount >= 0" },
+                                ]: HorizontalLayout {
+                                    spacing: Metrics.s2;
+                                    height: 26px;
+
+                                    Heading {
+                                        text: f.label;
+                                        width: 70px;
+                                    }
+
+                                    Rectangle {
+                                        border-radius: Metrics.radius-sm;
+                                        border-width: 1px;
+                                        border-color: Theme.border;
+                                        background: Theme.input-bg;
+
+                                        CellInput {
+                                            width: parent.width;
+                                            text: f.id == "roles" ? p.roles : f.id == "using" ? p.using : p.check;
+                                            placeholder: f.hint;
+                                            edited(text) => {
+                                                root.policy-field(i, f.id, text);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "USING filters reads, WITH CHECK validates writes. Changing the command, kind or name recreates the policy.";
+                            color: Theme.muted-fg;
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── SQL preview, only while there is something to apply ─────────────
+        if root.ddl != "" || root.problem != "": Rectangle {
+            vertical-stretch: 0;
+            min-height: 150px;
+            max-height: 200px;
+            background: Theme.background;
+
+            Rectangle {
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            VerticalLayout {
+                padding: Metrics.s3;
+                spacing: Metrics.s1;
+
+                HorizontalLayout {
+                    spacing: Metrics.s2;
+                    height: 18px;
+
+                    Heading {
+                        text: "SQL THAT WILL RUN";
+                        horizontal-stretch: 0;
+                    }
+
+                    if root.problem != "": Text {
+                        text: root.problem;
+                        color: Theme.destructive;
+                        font-size: Metrics.text-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                Flickable {
+                    viewport-height: max(self.height, sql.preferred-height);
+                    viewport-width: max(self.width, sql.preferred-width);
+
+                    sql := TextInput {
+                        text: root.ddl;
+                        read-only: true;
+                        single-line: false;
+                        wrap: no-wrap;
+                        color: root.ddl == "" ? Theme.gutter-fg : Theme.sql-ident;
+                        font-size: Metrics.text-sm;
+                        font-family: Metrics.font-mono;
+                        selection-background-color: Theme.primary.with-alpha(0.35);
+                        selection-foreground-color: Theme.foreground;
+                    }
+                }
+
+            }
+        }
+
+        if root.notes != "": Rectangle {
+            vertical-stretch: 0;
+            background: Theme.background;
+
+            Rectangle {
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding: Metrics.s2;
+                padding-left: Metrics.s3;
+
+                Text {
+                    text: root.notes;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}

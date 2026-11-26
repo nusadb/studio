@@ -1,0 +1,35 @@
+import { Theme, Metrics } from "../theme.slint";
+
+// A compact checkbox for dense grids (the designer's NOT NULL and PK columns).
+export component Checkbox inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    width: 16px;
+    height: 16px;
+    border-radius: Metrics.radius-sm;
+    border-width: 1px;
+    border-color: root.checked ? Theme.primary : touch.has-hover ? Theme.muted-fg : Theme.border;
+    background: root.checked ? Theme.primary : Theme.input-bg;
+    opacity: root.enabled ? 1.0 : 0.45;
+
+    if root.checked: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: Theme.on-primary;
+        stroke-width: 1.8px;
+        fill: Colors.transparent;
+        commands: "M 4 8.5 L 7 11.5 L 12 5";
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.toggled(!root.checked);
+        }
+    }
+}

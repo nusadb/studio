@@ -1,0 +1,165 @@
+import { Theme, Metrics } from "../theme.slint";
+import { PivotStore } from "../stores.slint";
+import { Select, Pill } from "../components/select.slint";
+import { AppButton } from "../components/app_button.slint";
+import { ResultGrid } from "../components/result_grid.slint";
+
+component Label inherits Text {
+    color: Theme.muted-fg;
+    font-size: Metrics.text-sm;
+    vertical-alignment: center;
+}
+
+// The Pivot tab of a query result: one column's values down, another's across, a third folded
+// into each cell, with totals. Computed from the rows fetched; "Open as SQL" has the server do
+// it on every row.
+export component PivotView inherits Rectangle {
+    background: Theme.background;
+
+    VerticalLayout {
+        Rectangle {
+            height: 44px;
+            background: Theme.card;
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s2;
+
+                Label { text: "Rows"; }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Select {
+                        width: 130px;
+                        options: PivotStore.columns;
+                        selected: PivotStore.rows;
+                        mono: true;
+                        picked(i) => {
+                            PivotStore.set("rows", i, "");
+                        }
+                    }
+                }
+
+                Label { text: "Columns"; }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Select {
+                        width: 130px;
+                        options: PivotStore.columns;
+                        selected: PivotStore.cols;
+                        mono: true;
+                        picked(i) => {
+                            PivotStore.set("cols", i, "");
+                        }
+                    }
+                }
+
+                Label { text: "Value"; }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Select {
+                        width: 130px;
+                        options: PivotStore.columns;
+                        selected: PivotStore.value;
+                        placeholder: "count rows";
+                        mono: true;
+                        picked(i) => {
+                            PivotStore.set("value", i, "");
+                        }
+                    }
+                }
+
+                if PivotStore.value >= 0: VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "close";
+                        tooltip: "Count rows instead";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            PivotStore.set("value", -1, "");
+                        }
+                    }
+                }
+
+                if PivotStore.value >= 0: HorizontalLayout {
+                    spacing: 4px;
+
+                    for a in ["sum", "avg", "min", "max", "count"]: VerticalLayout {
+                        alignment: center;
+
+                        Pill {
+                            label: a;
+                            on: PivotStore.agg == a;
+                            picked => {
+                                PivotStore.set("agg", -1, a);
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Open as SQL";
+                        icon: "open";
+                        tooltip: "The same pivot as SQL, for the server to compute on every row";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: PivotStore.grid-columns.length > 0;
+                        clicked => {
+                            PivotStore.open-sql();
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+
+        if PivotStore.note != "": Rectangle {
+            height: 28px;
+
+            Text {
+                x: Metrics.s3;
+                text: PivotStore.note;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-sm;
+                vertical-alignment: center;
+                height: parent.height;
+            }
+        }
+
+        if PivotStore.grid-columns.length > 0: ResultGrid {
+            vertical-stretch: 1;
+            columns: PivotStore.grid-columns;
+            columns-width: PivotStore.grid-width;
+            rows: PivotStore.grid-rows;
+            editable: false;
+            sortable: false;
+            action(what, r1, c1, r2, c2) => {
+                if (what == "copy" || what == "copy-headers") {
+                    PivotStore.copy-cells(r1, c1, r2, c2, what == "copy-headers");
+                }
+            }
+        }
+
+        if PivotStore.grid-columns.length == 0: Rectangle {
+            vertical-stretch: 1;
+        }
+    }
+}

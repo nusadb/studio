@@ -1,0 +1,800 @@
+import { Theme, Metrics } from "../theme.slint";
+import { VectorColumn, GridColumn, GridRow, ChartPoint } from "../models.slint";
+import { Select, Pill } from "../components/select.slint";
+import { AppButton } from "../components/app_button.slint";
+import { TextField } from "../components/text_field.slint";
+import { ResultGrid } from "../components/result_grid.slint";
+import { Icon } from "../components/icon.slint";
+import { Tip } from "../components/tooltip.slint";
+import { VectorStore } from "../stores.slint";
+
+component Label inherits Text {
+    color: Theme.muted-fg;
+    font-size: Metrics.text-sm;
+    vertical-alignment: center;
+}
+
+component Heading inherits Text {
+    color: Theme.muted-fg;
+    font-size: Metrics.text-xs;
+    font-weight: 600;
+}
+
+// A dot that shows its row on hover and searches from it on click.
+component MapDot inherits Rectangle {
+    in property <ChartPoint> point;
+    in property <length> area-w;
+    in property <length> area-h;
+    callback picked();
+
+    x: self.point.x * self.area-w - 4px;
+    y: (1 - self.point.y) * self.area-h - 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: dot-touch.has-hover ? Theme.foreground : Theme.series[Math.mod(self.point.series, 8)];
+    opacity: 0.85;
+
+    dot-touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            Tip.dismiss();
+            root.picked();
+        }
+        changed has-hover => {
+            if (self.has-hover) {
+                Tip.request(root.point.label + "  ·  click to search from here", self.absolute-position.x + 4px,
+                    self.absolute-position.y);
+            } else {
+                Tip.dismiss();
+            }
+        }
+    }
+}
+
+// The Vectors tab of a table with VECTOR columns: what the columns hold, their HNSW indexes,
+// nearest-neighbour search (optionally fused with full-text search), and a 2D map of a sample.
+export component VectorView inherits Rectangle {
+    in property <[VectorColumn]> columns;
+    in property <int> column: 0;
+    // Index into cosine, L2, inner product, L1.
+    in property <int> metric: 0;
+    in-out property <string> k: "10";
+    in-out property <string> ef: "";
+    in-out property <string> query;
+    // "Vector only" first, then the text columns for hybrid search.
+    in property <[string]> text-columns;
+    in property <int> text-column: -1;
+    in-out property <string> text-query;
+    // Hybrid search needs a single-column primary key to join the two rankings.
+    in property <bool> hybrid-ok;
+    in property <bool> has-selection;
+    in property <bool> busy;
+    in property <string> error;
+    // After a search: "index" | "exact" | "" and the words for it.
+    in property <string> plan;
+    in property <string> plan-text;
+    in property <string> summary;
+    in property <[GridColumn]> result-columns;
+    in property <length> result-width;
+    in property <[GridRow]> result-rows;
+    callback pick-column(int);
+    callback pick-metric(int);
+    callback pick-text-column(int);
+    callback from-row();
+    callback search();
+    callback create-index(int, int);
+    callback open-sql();
+    callback copy-cells(int, int, int, int, bool);
+
+    property <[string]> metric-names: ["cosine", "L2", "inner product", "L1"];
+    property <[string]> metric-tips: [
+        "Cosine distance, operator <=>. Direction only; the usual choice for text embeddings.",
+        "Euclidean (L2) distance, operator <->.",
+        "Negative inner product, operator <#>. For unit-length vectors it ranks like cosine.",
+        "Manhattan (L1) distance, operator <+>.",
+    ];
+
+    background: Theme.background;
+
+    HorizontalLayout {
+        // ── Columns and their indexes ───────────────────────────────────────
+        Rectangle {
+            width: 290px;
+            background: Theme.card;
+
+            VerticalLayout {
+                padding: Metrics.s3;
+                spacing: Metrics.s3;
+                alignment: start;
+
+                Heading {
+                    text: "VECTOR COLUMNS";
+                }
+
+                for c[i] in root.columns: Rectangle {
+                    border-radius: Metrics.radius;
+                    border-width: 1px;
+                    border-color: i == root.column ? Theme.primary : Theme.border;
+                    background: i == root.column ? Theme.primary.with-alpha(0.06) : Theme.background;
+                    height: col-body.preferred-height;
+
+                    TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => {
+                            root.pick-column(i);
+                        }
+                    }
+
+                    col-body := VerticalLayout {
+                        padding: Metrics.s3;
+                        spacing: 6px;
+
+                        HorizontalLayout {
+                            Text {
+                                text: c.name;
+                                color: Theme.foreground;
+                                font-size: Metrics.text-md;
+                                font-weight: 600;
+                                font-family: Metrics.font-mono;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: c.dims + " dims";
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-xs;
+                                font-family: Metrics.font-mono;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            text: c.rows + "  ·  avg norm " + c.norm;
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-xs;
+                        }
+
+                        if c.detail != "": Text {
+                            text: c.detail;
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-xs;
+                            wrap: word-wrap;
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border;
+                        }
+
+                        Heading {
+                            text: "HNSW INDEXES";
+                        }
+
+                        if c.indexes.length == 4 && c.indexes[0] == "" && c.indexes[1] == "" && c.indexes[2] == "" && c.indexes[3] == "": Text {
+                            text: "None. Every search scans all rows.";
+                            color: Theme.warning;
+                            font-size: Metrics.text-xs;
+                            wrap: word-wrap;
+                        }
+
+                        // One slot per metric; empty slots take no room.
+                        VerticalLayout {
+                            spacing: 0px;
+
+                        for ix[mi] in c.indexes: HorizontalLayout {
+                            visible: ix != "";
+                            height: ix != "" ? 22px : 0px;
+                            spacing: 6px;
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                Rectangle {
+                                    width: 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: Theme.success;
+                                }
+                            }
+
+                            Text {
+                                text: ix;
+                                color: Theme.foreground;
+                                font-size: Metrics.text-xs;
+                                font-family: Metrics.font-mono;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+
+                                TouchArea {
+                                    changed has-hover => {
+                                        if (self.has-hover) {
+                                            Tip.request(ix, self.absolute-position.x + self.width / 2,
+                                                self.absolute-position.y + self.height);
+                                        } else {
+                                            Tip.dismiss();
+                                        }
+                                    }
+                                }
+                            }
+
+                            AppButton {
+                                icon: "close";
+                                tooltip: "Drop this index";
+                                variant: "ghost";
+                                size: "sm";
+                                enabled: !root.busy;
+                                clicked => {
+                                    VectorStore.drop-index(i, mi);
+                                }
+                            }
+                        }
+                        }
+
+                        Text {
+                            text: "Add index for";
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-xs;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 4px;
+                            alignment: start;
+
+                            for m[mi] in root.metric-names: Pill {
+                                label: mi == 2 ? "IP" : m;
+                                tooltip: mi < c.indexed.length && c.indexed[mi] ? "Already indexed for " + m
+                                    : "Create an HNSW index for " + m + " distance";
+                                enabled: !(mi < c.indexed.length && c.indexed[mi]) && !root.busy;
+                                marked: mi < c.indexed.length && c.indexed[mi];
+                                picked => {
+                                    root.create-index(i, mi);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Theme.border;
+            }
+        }
+
+        // ── Search or map ───────────────────────────────────────────────────
+        VerticalLayout {
+            horizontal-stretch: 1;
+
+            // View switch.
+            Rectangle {
+                height: 40px;
+                background: Theme.card;
+
+                HorizontalLayout {
+                    padding-left: Metrics.s3;
+                    padding-right: Metrics.s3;
+                    spacing: Metrics.s2;
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        Pill {
+                            label: "Search";
+                            tooltip: "Nearest neighbours of a vector";
+                            on: VectorStore.view == "search";
+                            picked => {
+                                VectorStore.view = "search";
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        Pill {
+                            label: "Map";
+                            tooltip: "A 2D picture of a sample of the vectors (PCA)";
+                            on: VectorStore.view == "map";
+                            picked => {
+                                VectorStore.view = "map";
+                                if (VectorStore.map-state == "") {
+                                    VectorStore.load-map();
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+                }
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+
+            // ── Search ──────────────────────────────────────────────────────
+            if VectorStore.view == "search": Rectangle {
+                background: Theme.card;
+                height: search-form.preferred-height;
+
+                search-form := VerticalLayout {
+                    padding: Metrics.s3;
+                    spacing: Metrics.s2;
+
+                    HorizontalLayout {
+                        spacing: Metrics.s2;
+
+                        Label {
+                            text: "Metric";
+                            min-width: 60px;
+                            max-width: 60px;
+                        }
+
+                        for m[mi] in root.metric-names: VerticalLayout {
+                            alignment: center;
+
+                            Pill {
+                                label: m;
+                                tooltip: root.metric-tips[mi];
+                                on: root.metric == mi;
+                                marked: root.column < root.columns.length && mi < root.columns[root.column].indexed.length
+                                    && root.columns[root.column].indexed[mi];
+                                picked => {
+                                    root.pick-metric(mi);
+                                }
+                            }
+                        }
+
+                        Rectangle { horizontal-stretch: 1; }
+
+                        Label {
+                            text: "Top k";
+                        }
+
+                        TextField {
+                            width: 64px;
+                            text <=> root.k;
+                            mono: true;
+                            accepted => {
+                                root.search();
+                            }
+                        }
+
+                        Label {
+                            text: "ef_search";
+                        }
+
+                        TextField {
+                            width: 76px;
+                            text <=> root.ef;
+                            placeholder: "default";
+                            mono: true;
+                            accepted => {
+                                root.search();
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Metrics.s2;
+
+                        Label {
+                            text: "Vector";
+                            min-width: 60px;
+                            max-width: 60px;
+                        }
+
+                        TextField {
+                            horizontal-stretch: 1;
+                            text <=> root.query;
+                            placeholder: "[0.12, 0.53, …]";
+                            mono: true;
+                            accepted => {
+                                root.search();
+                            }
+                        }
+
+                        AppButton {
+                            width: 156px;
+                            label: "From selected row";
+                            icon: "selection";
+                            tooltip: "Use the vector of the row selected on the Data tab";
+                            variant: "outline";
+                            enabled: root.has-selection;
+                            clicked => {
+                                root.from-row();
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Metrics.s2;
+
+                        Label {
+                            text: "Filter";
+                            min-width: 60px;
+                            max-width: 60px;
+                        }
+
+                        TextField {
+                            horizontal-stretch: 1;
+                            text <=> VectorStore.filter;
+                            placeholder: "WHERE …   e.g. lang = 'id' AND price < 100";
+                            mono: true;
+                            accepted => {
+                                root.search();
+                            }
+                        }
+
+                        Label {
+                            text: "Max distance";
+                        }
+
+                        TextField {
+                            width: 76px;
+                            text <=> VectorStore.max-distance;
+                            placeholder: "none";
+                            mono: true;
+                            accepted => {
+                                root.search();
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Metrics.s2;
+
+                        Label {
+                            text: "Text";
+                            min-width: 60px;
+                            max-width: 60px;
+                        }
+
+                        Select {
+                            width: 160px;
+                            // The first option, "Vector only", turns hybrid search off.
+                            options: root.text-columns;
+                            selected: root.text-column + 1;
+                            picked(i) => {
+                                root.pick-text-column(i - 1);
+                            }
+                        }
+
+                        TextField {
+                            horizontal-stretch: 1;
+                            text <=> root.text-query;
+                            placeholder: root.text-column < 0 ? "Hybrid search: pick a text column" : "Words to match";
+                            accepted => {
+                                root.search();
+                            }
+                        }
+
+                        AppButton {
+                            width: 156px;
+                            label: "Search";
+                            icon: "search";
+                            tooltip: "Vector and text rankings are fused with rrf_score when a text column is picked";
+                            variant: "primary";
+                            enabled: !root.busy && root.columns.length > 0;
+                            clicked => {
+                                root.search();
+                            }
+                        }
+                    }
+
+                    if root.text-column >= 0 && !root.hybrid-ok: Text {
+                        text: "Hybrid search needs a single-column primary key on this table.";
+                        color: Theme.warning;
+                        font-size: Metrics.text-xs;
+                    }
+
+                    if root.error != "": Text {
+                        text: root.error;
+                        color: Theme.destructive;
+                        font-size: Metrics.text-sm;
+                        wrap: word-wrap;
+                    }
+                }
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+
+            // How the search ran.
+            if VectorStore.view == "search" && (root.plan != "" || root.summary != ""): Rectangle {
+                height: 36px;
+
+                HorizontalLayout {
+                    padding-left: Metrics.s3;
+                    padding-right: Metrics.s3;
+                    spacing: Metrics.s2;
+
+                    if root.plan != "": VerticalLayout {
+                        alignment: center;
+
+                        Rectangle {
+                            height: 22px;
+                            width: plan-row.preferred-width;
+                            border-radius: 11px;
+                            background: root.plan == "index" ? Theme.success.with-alpha(0.14) : Theme.warning.with-alpha(0.16);
+
+                            plan-row := HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 10px;
+                                spacing: 6px;
+
+                                VerticalLayout {
+                                    alignment: center;
+
+                                    Rectangle {
+                                        width: 6px;
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: root.plan == "index" ? Theme.success : Theme.warning;
+                                    }
+                                }
+
+                                Text {
+                                    text: root.plan-text;
+                                    color: Theme.foreground;
+                                    font-size: Metrics.text-xs;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    if root.plan == "exact": VerticalLayout {
+                        alignment: center;
+
+                        AppButton {
+                            label: "Create index";
+                            icon: "plus";
+                            tooltip: "Build an HNSW index for this metric";
+                            variant: "ghost";
+                            size: "sm";
+                            enabled: !root.busy;
+                            clicked => {
+                                root.create-index(root.column, root.metric);
+                            }
+                        }
+                    }
+
+                    if root.plan == "index": VerticalLayout {
+                        alignment: center;
+
+                        AppButton {
+                            label: "Check recall";
+                            icon: "selection";
+                            tooltip: "Compare with an exact search: how many of the true nearest rows the index found";
+                            variant: "ghost";
+                            size: "sm";
+                            enabled: !root.busy;
+                            clicked => {
+                                VectorStore.check-recall();
+                            }
+                        }
+                    }
+
+                    if VectorStore.recall != "": VerticalLayout {
+                        alignment: center;
+
+                        Text {
+                            text: VectorStore.recall;
+                            color: Theme.foreground;
+                            font-size: Metrics.text-sm;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        Text {
+                            text: root.busy ? "Working…" : root.summary;
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                            font-family: Metrics.font-mono;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        AppButton {
+                            label: "Open in Query";
+                            icon: "open";
+                            tooltip: "The search as SQL, in a query tab";
+                            variant: "ghost";
+                            size: "sm";
+                            enabled: root.summary != "";
+                            clicked => {
+                                root.open-sql();
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+
+            if VectorStore.view == "search" && root.result-columns.length == 0: Rectangle {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: Metrics.s2;
+
+                    HorizontalLayout {
+                        alignment: center;
+
+                        Icon {
+                            name: "search";
+                            size: 22px;
+                            tint: Theme.muted-fg;
+                        }
+                    }
+
+                    Text {
+                        text: "Nearest-neighbour search";
+                        color: Theme.foreground;
+                        font-size: Metrics.text-md;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Paste a vector or take one from a row, then Search.";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            if VectorStore.view == "search" && root.result-columns.length > 0: ResultGrid {
+                vertical-stretch: 1;
+                columns: root.result-columns;
+                columns-width: root.result-width;
+                rows: root.result-rows;
+                editable: false;
+                sortable: false;
+                action(what, r1, c1, r2, c2) => {
+                    if (what == "copy" || what == "copy-headers") {
+                        root.copy-cells(r1, c1, r2, c2, what == "copy-headers");
+                    }
+                }
+            }
+
+            // ── Map ─────────────────────────────────────────────────────────
+            if VectorStore.view == "map": Rectangle {
+                height: 44px;
+                background: Theme.card;
+
+                HorizontalLayout {
+                    padding-left: Metrics.s3;
+                    padding-right: Metrics.s3;
+                    spacing: Metrics.s2;
+
+                    Label { text: "Colour by"; }
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        Select {
+                            width: 160px;
+                            options: VectorStore.label-columns;
+                            selected: VectorStore.label-column;
+                            placeholder: "none";
+                            mono: true;
+                            picked(i) => {
+                                VectorStore.pick-label(i);
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        Text {
+                            text: VectorStore.map-state == "loading" ? "Reading a sample…" : VectorStore.map-note;
+                            color: VectorStore.map-state == "error" ? Theme.destructive : Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                            overflow: elide;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        AppButton {
+                            label: "New sample";
+                            icon: "refresh";
+                            tooltip: "Draw another random sample";
+                            variant: "ghost";
+                            size: "sm";
+                            enabled: VectorStore.map-state != "loading";
+                            clicked => {
+                                VectorStore.load-map();
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+            }
+
+            if VectorStore.view == "map": HorizontalLayout {
+                vertical-stretch: 1;
+
+                map-area := Rectangle {
+                    horizontal-stretch: 1;
+                    clip: true;
+
+                    for p[pi] in VectorStore.map-points: MapDot {
+                        point: p;
+                        area-w: map-area.width;
+                        area-h: map-area.height;
+                        picked => {
+                            VectorStore.map-pick(pi);
+                        }
+                    }
+                }
+
+                if VectorStore.map-legend.length > 0: Rectangle {
+                    width: 170px;
+
+                    VerticalLayout {
+                        padding: Metrics.s3;
+                        spacing: 6px;
+                        alignment: start;
+
+                        for name[i] in VectorStore.map-legend: HorizontalLayout {
+                            spacing: 8px;
+                            height: 18px;
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                Rectangle {
+                                    width: 10px;
+                                    height: 10px;
+                                    border-radius: 5px;
+                                    background: Theme.series[Math.mod(i, 8)];
+                                }
+                            }
+
+                            Text {
+                                text: name;
+                                color: Theme.foreground;
+                                font-size: Metrics.text-sm;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

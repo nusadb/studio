@@ -1,0 +1,316 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { Keys } from "../keys.slint";
+import { Toggle } from "../components/toggle.slint";
+import { AppButton } from "../components/app_button.slint";
+
+// Preferences on one page in two columns: the settings on the left, the keyboard shortcuts
+// for this platform on the right. Every change is saved at once.
+
+// One choice among a few, as a row of chips (the same control as the server environment).
+component Choice inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback picked();
+
+    height: 26px;
+    min-width: max(36px, chip-text.preferred-width + 20px);
+    border-radius: Metrics.radius-sm;
+    border-width: 1px;
+    border-color: root.active ? Theme.primary : Theme.border;
+    background: root.active ? Theme.primary.with-alpha(0.12) : touch.has-hover ? Theme.muted : Colors.transparent;
+
+    chip-text := Text {
+        text: root.label;
+        color: root.active ? Theme.primary : Theme.foreground;
+        font-size: Metrics.text-sm;
+        font-weight: root.active ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+}
+
+// A labelled setting: name and one line of explanation on the left, the control on the right.
+component Row inherits HorizontalLayout {
+    in property <string> name;
+    in property <string> note;
+
+    spacing: Metrics.s4;
+    padding-top: Metrics.s2;
+    padding-bottom: Metrics.s2;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 2px;
+        horizontal-stretch: 1;
+
+        Text {
+            text: root.name;
+            color: Theme.foreground;
+            font-size: Metrics.text-md;
+        }
+
+        if root.note != "": Text {
+            text: root.note;
+            color: Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            wrap: word-wrap;
+        }
+    }
+
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 0;
+
+        @children
+    }
+}
+
+component Section inherits Text {
+    color: Theme.muted-fg;
+    font-size: Metrics.text-xs;
+    font-weight: 600;
+}
+
+component Shortcut inherits HorizontalLayout {
+    in property <string> action;
+    in property <string> keys;
+
+    height: 28px;
+    spacing: Metrics.s3;
+
+    Text {
+        text: root.action;
+        color: Theme.foreground;
+        font-size: Metrics.text-sm;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        text: root.keys;
+        color: Theme.muted-fg;
+        font-size: Metrics.text-sm;
+        font-family: Metrics.font-mono;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+        horizontal-stretch: 0;
+    }
+}
+
+export component SettingsView inherits Rectangle {
+    in-out property <int> page-size: 200;
+    in-out property <bool> details-panel;
+    in-out property <int> result-rows: 1000;
+    in-out property <int> history: 100;
+    in property <string> version;
+    in property <string> driver;
+    in property <string> folder;
+    callback changed();
+    callback copy(string);
+
+    background: Theme.background;
+
+    VerticalLayout {
+        // Header, like the other whole-width screens.
+        Rectangle {
+            min-height: 52px;
+            max-height: 52px;
+            vertical-stretch: 0;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                width: parent.width;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s5;
+
+                Text {
+                    text: "Settings";
+                    color: Theme.foreground;
+                    font-size: Metrics.text-lg;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        scroll := ScrollView {
+            HorizontalLayout {
+                width: scroll.visible-width;
+                padding: Metrics.s5;
+                spacing: Metrics.s6;
+
+                // ── Settings ─────────────────────────────────────────────────
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: start;
+                    spacing: Metrics.s1;
+
+                    Section { text: "APPEARANCE"; }
+
+                    Row {
+                        name: "Theme";
+                        HorizontalLayout {
+                            spacing: Metrics.s1;
+                            Choice {
+                                label: "Light";
+                                active: !Theme.dark;
+                                picked => { Theme.dark = false; root.changed(); }
+                            }
+                            Choice {
+                                label: "Dark";
+                                active: Theme.dark;
+                                picked => { Theme.dark = true; root.changed(); }
+                            }
+                        }
+                    }
+
+                    Row {
+                        name: "Editor font size";
+                        note: "The SQL editor and the value panel.";
+                        HorizontalLayout {
+                            spacing: Metrics.s1;
+                            for size in [12, 13, 14, 15, 16, 18]: Choice {
+                                label: size;
+                                active: Metrics.text-code == size * 1px;
+                                picked => { Metrics.text-code = size * 1px; root.changed(); }
+                            }
+                        }
+                    }
+
+                    Rectangle { height: Metrics.s3; }
+                    Section { text: "DATA"; }
+
+                    Row {
+                        name: "Rows per page";
+                        note: "How many rows the Data screen loads at a time.";
+                        HorizontalLayout {
+                            spacing: Metrics.s1;
+                            for n in [100, 200, 500, 1000]: Choice {
+                                label: n;
+                                active: root.page-size == n;
+                                picked => { root.page-size = n; root.changed(); }
+                            }
+                        }
+                    }
+
+                    Rectangle { height: Metrics.s3; }
+                    Section { text: "QUERY"; }
+
+                    Row {
+                        name: "Rows kept in the results";
+                        note: "A larger result is cut there; Export always writes every row.";
+                        HorizontalLayout {
+                            spacing: Metrics.s1;
+                            for n in [500, 1000, 5000, 10000]: Choice {
+                                label: n == 1000 ? "1,000" : n == 5000 ? "5,000" : n == 10000 ? "10,000" : n;
+                                active: root.result-rows == n;
+                                picked => { root.result-rows = n; root.changed(); }
+                            }
+                        }
+                    }
+
+                    Row {
+                        name: "History";
+                        note: "How many scripts the History tab keeps.";
+                        HorizontalLayout {
+                            spacing: Metrics.s1;
+                            for n in [50, 100, 500]: Choice {
+                                label: n;
+                                active: root.history == n;
+                                picked => { root.history = n; root.changed(); }
+                            }
+                        }
+                    }
+
+                    Rectangle { height: Metrics.s3; }
+                    Section { text: "LAYOUT"; }
+
+                    Row {
+                        name: "Details panel";
+                        note: "A panel on the right with the selected object's details.";
+                        Toggle {
+                            checked <=> root.details-panel;
+                            toggled => { root.changed(); }
+                        }
+                    }
+
+                    Rectangle { height: Metrics.s3; }
+                    Section { text: "ABOUT"; }
+
+                    Row {
+                        name: "NusaDB Studio " + root.version;
+                        note: "NusaDB driver " + root.driver + ". Fonts: Inter and JetBrains Mono (SIL Open Font License).";
+                    }
+
+                    Row {
+                        name: "Settings folder";
+                        note: root.folder + "\nservers.json, settings.json and history.json. Passwords are never stored here.";
+                        AppButton {
+                            label: "Copy path";
+                            icon: "copy";
+                            variant: "outline";
+                            size: "sm";
+                            enabled: root.folder != "";
+                            clicked => { root.copy(root.folder); }
+                        }
+                    }
+                }
+
+                // A rule between the two columns.
+                Rectangle {
+                    width: 1px;
+                    horizontal-stretch: 0;
+                    background: Theme.border;
+                }
+
+                // ── Keyboard shortcuts ───────────────────────────────────────
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: start;
+                    spacing: 0px;
+
+                    Section {
+                        text: "KEYBOARD SHORTCUTS";
+                        height: 20px;
+                    }
+
+                    Text {
+                        text: Keys.mac ? "As written on macOS." : "On macOS ⌘ takes the place of Ctrl.";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        height: 24px;
+                    }
+
+                    Shortcut { action: "Run statement at cursor or selection"; keys: Keys.run; }
+                    Shortcut { action: "Run whole script"; keys: Keys.run-all + "  ·  F5"; }
+                    Shortcut { action: "Completion"; keys: Keys.complete; }
+                    Shortcut { action: "Format SQL"; keys: Keys.format; }
+                    Shortcut { action: "Find / replace"; keys: Keys.find + "  ·  " + Keys.replace-label; }
+                    Shortcut { action: "New / close query tab"; keys: Keys.new-tab + "  ·  " + Keys.close-tab; }
+                    Shortcut { action: "Open / save script"; keys: Keys.open + "  ·  " + Keys.save; }
+                    Shortcut { action: "Save script as"; keys: Keys.save-as; }
+                    Shortcut { action: "Grid: copy / paste cells"; keys: Keys.copy + "  ·  " + Keys.paste; }
+                    Shortcut { action: "Grid: undo / redo staged edit"; keys: Keys.undo + "  ·  " + Keys.redo; }
+                    Shortcut { action: "Grid: select all cells"; keys: Keys.select-all; }
+                    Shortcut { action: "Grid: clear selected cells"; keys: "Delete"; }
+                    Shortcut { action: "Grid: save staged edits"; keys: Keys.save; }
+                    Shortcut { action: "Grid: extend selection"; keys: "Shift + arrows"; }
+                    Shortcut { action: "Grid: edit cell"; keys: "Enter  ·  F2"; }
+                    Shortcut { action: "Value panel: apply"; keys: Keys.apply; }
+                }
+            }
+        }
+    }
+}

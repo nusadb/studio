@@ -1,0 +1,163 @@
+import { Theme, Metrics } from "../theme.slint";
+import { Icon } from "icon.slint";
+import { Tip } from "tooltip.slint";
+
+// A choice among a few labels, in a row: chart kind, metric, sample size.
+export component Pill inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    // A small dot after the label, e.g. "this metric has an HNSW index".
+    in property <bool> marked;
+    in property <string> tooltip;
+    callback picked();
+
+    height: 24px;
+    min-width: pill-row.preferred-width;
+    max-width: pill-row.preferred-width;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: root.on ? Theme.primary : touch.has-hover && root.enabled ? Theme.muted-fg : Theme.border;
+    background: root.on ? Theme.primary.with-alpha(0.14) : Colors.transparent;
+    opacity: root.enabled ? 1 : 0.45;
+
+    pill-row := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 5px;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            color: root.on ? Theme.accent-fg : Theme.foreground;
+            font-size: Metrics.text-sm;
+            vertical-alignment: center;
+        }
+
+        if root.marked: VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.success;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+        changed has-hover => {
+            if (self.has-hover && root.tooltip != "") {
+                Tip.request(root.tooltip, self.absolute-position.x + self.width / 2,
+                    self.absolute-position.y + self.height);
+            } else {
+                Tip.dismiss();
+            }
+        }
+    }
+}
+
+// A dropdown: the chosen label with a chevron; a click lists the options below it.
+export component Select inherits Rectangle {
+    in property <[string]> options;
+    // -1: nothing chosen yet, `placeholder` shows.
+    in property <int> selected: -1;
+    in property <string> placeholder: "Choose…";
+    in property <bool> mono;
+    callback picked(int);
+
+    height: Metrics.control-h;
+    min-width: 120px;
+    border-radius: Metrics.radius;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.muted-fg : Theme.border;
+    background: Theme.input-bg;
+
+    HorizontalLayout {
+        padding-left: Metrics.s2;
+        padding-right: 6px;
+        spacing: 4px;
+
+        Text {
+            text: root.selected >= 0 && root.selected < root.options.length ? root.options[root.selected] : root.placeholder;
+            color: root.selected >= 0 ? Theme.foreground : Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            font-family: root.mono ? Metrics.font-mono : Metrics.font-ui;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        VerticalLayout {
+            alignment: center;
+
+            Icon {
+                name: "chevron-down";
+                size: 12px;
+                tint: Theme.muted-fg;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            list.show();
+        }
+    }
+
+    list := PopupWindow {
+        x: 0;
+        y: root.height + 2px;
+        width: max(root.width, 180px);
+        height: min(root.options.length * 26px + 8px, 300px);
+
+        Rectangle {
+            border-radius: Metrics.radius;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.popover;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000033;
+            clip: true;
+
+            Flickable {
+                y: 4px;
+                height: parent.height - 8px;
+                viewport-height: root.options.length * 26px;
+
+                for option[i] in root.options: Rectangle {
+                    y: i * 26px;
+                    height: 26px;
+                    background: option-touch.has-hover ? Theme.muted : i == root.selected ? Theme.primary.with-alpha(0.10) : Colors.transparent;
+
+                    Text {
+                        x: Metrics.s2;
+                        text: option;
+                        color: Theme.foreground;
+                        font-size: Metrics.text-sm;
+                        font-family: root.mono ? Metrics.font-mono : Metrics.font-ui;
+                        vertical-alignment: center;
+                        height: parent.height;
+                        width: parent.width - 2 * Metrics.s2;
+                        overflow: elide;
+                    }
+
+                    option-touch := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => {
+                            root.picked(i);
+                            list.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

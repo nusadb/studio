@@ -1,0 +1,138 @@
+import { Theme, Metrics } from "../theme.slint";
+import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
+
+// A modal question over the whole window, for actions that cannot be taken back.
+//
+// It names exactly what will happen, one line per statement, and the safe choice is the
+// default: Escape and a click outside both cancel, and Enter does nothing — the destructive
+// button has to be pressed on purpose.
+export component ConfirmDialog inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <[string]> reasons;
+    // Parallel to reasons: true when that line is a SQL statement.
+    in property <[bool]> codes;
+    // Two or more sentences: list them with bullets.
+    in property <bool> bullets;
+    in property <string> accept-label: "Run anyway";
+    callback accept();
+    callback cancel();
+
+    background: #00000080;
+
+    // Swallows clicks so nothing behind the dialog reacts; a click on the dim area cancels.
+    TouchArea {
+        clicked => {
+            root.cancel();
+        }
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.cancel();
+            }
+            return EventResult.accept;
+        }
+    }
+
+    init => {
+        keys.focus();
+    }
+
+    card := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2.4;
+        width: 460px;
+        height: body.preferred-height;
+        border-radius: Metrics.radius-lg;
+        border-width: 1px;
+        border-color: Theme.destructive.with-alpha(0.5);
+        background: Theme.popover;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000066;
+
+        // Clicks on the card itself must not reach the dim area's cancel.
+        TouchArea { }
+
+        body := VerticalLayout {
+            padding: Metrics.s5;
+            spacing: Metrics.s3;
+
+            HorizontalLayout {
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: start;
+                    padding-top: 2px;
+                    horizontal-stretch: 0;
+
+                    Icon {
+                        name: "error";
+                        tint: Theme.destructive;
+                        size: 18px;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 3px;
+
+                    Text {
+                        text: root.title;
+                        color: Theme.foreground;
+                        font-size: Metrics.text-lg;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: root.subtitle;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            Rectangle {
+                border-radius: Metrics.radius;
+                background: Theme.destructive.with-alpha(0.08);
+
+                VerticalLayout {
+                    padding: Metrics.s3;
+                    spacing: 6px;
+
+                    for reason[i] in root.reasons: Text {
+                        text: root.codes[i] || !root.bullets ? reason : "•  " + reason;
+                        color: Theme.foreground;
+                        font-size: root.codes[i] ? Metrics.text-code - 1px : Metrics.text-sm;
+                        font-family: root.codes[i] ? Metrics.font-mono : Metrics.font-ui;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Metrics.s2;
+                alignment: end;
+
+                AppButton {
+                    label: "Cancel";
+                    variant: "outline";
+                    clicked => {
+                        root.cancel();
+                    }
+                }
+
+                AppButton {
+                    label: root.accept-label;
+                    variant: "danger";
+                    clicked => {
+                        root.accept();
+                    }
+                }
+            }
+        }
+    }
+}

@@ -11,22 +11,37 @@ import { Toggle } from "../components/toggle.slint";
 component ServerCard inherits Rectangle {
     in property <ServerRow> server;
     in property <bool> selected;
+    // This card's Remove has been pressed once and is waiting for the second press.
+    in property <bool> confirming;
     callback edit();
     callback remove();
+    callback connect();
+    callback disconnect();
 
-    height: 78px;
+    property <bool> live: root.server.status == "connected" || root.server.status == "connecting";
+
+    height: 84px;
     border-radius: Metrics.radius;
     border-width: 1px;
     border-color: root.selected ? Theme.primary : Theme.border;
-    background: Theme.card;
+    background: card-touch.has-hover && !root.selected ? Theme.muted.with-alpha(0.5) : Theme.card;
+
+    card-touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.edit();
+        }
+    }
 
     HorizontalLayout {
-        padding: Metrics.s3;
+        padding-left: Metrics.s3;
+        padding-right: Metrics.s3;
         spacing: Metrics.s3;
 
         VerticalLayout {
-            spacing: Metrics.s1;
+            spacing: 3px;
             alignment: center;
+            horizontal-stretch: 1;
 
             HorizontalLayout {
                 spacing: Metrics.s2;
@@ -39,68 +54,89 @@ component ServerCard inherits Rectangle {
                     }
                 }
 
+                Text {
+                    text: root.server.name;
+                    color: Theme.foreground;
+                    font-size: Metrics.text-md;
+                    font-weight: 600;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
                 VerticalLayout {
                     alignment: center;
 
-                    Text {
-                        text: root.server.name;
-                        color: Theme.foreground;
-                        font-size: Metrics.text-md;
-                        font-weight: 600;
-                        overflow: elide;
+                    EnvBadge {
+                        env: root.server.env;
                     }
                 }
 
-                EnvBadge {
-                    env: root.server.env;
-                }
+                if root.server.tls: VerticalLayout {
+                    alignment: center;
 
-                if root.server.tls: Badge {
-                    label: "TLS";
-                    tone: Theme.info;
+                    Badge {
+                        label: "TLS";
+                        tone: Theme.info;
+                    }
                 }
 
                 Rectangle { }
             }
 
             Text {
-                text: root.server.endpoint;
-                color: Theme.foreground;
+                text: root.server.endpoint + "  ·  " + root.server.detail;
+                color: Theme.muted-fg;
                 font-size: Metrics.text-sm;
                 font-family: Metrics.font-mono;
                 overflow: elide;
             }
 
             Text {
-                text: root.server.detail;
-                color: Theme.muted-fg;
-                font-size: Metrics.text-sm;
+                text: root.server.last-used;
+                color: Theme.gutter-fg;
+                font-size: Metrics.text-xs;
                 overflow: elide;
             }
         }
 
         VerticalLayout {
             alignment: center;
-            spacing: Metrics.s1;
             horizontal-stretch: 0;
 
-            AppButton {
-                label: "Edit";
-                variant: "secondary";
-                height: 26px;
-                width: 62px;
-                clicked => {
-                    root.edit();
-                }
-            }
+            HorizontalLayout {
+                spacing: Metrics.s1;
 
-            AppButton {
-                label: "Remove";
-                variant: "ghost";
-                height: 26px;
-                width: 62px;
-                clicked => {
-                    root.remove();
+                AppButton {
+                    label: root.live ? "Disconnect" : "Connect";
+                    variant: root.live ? "outline" : "secondary";
+                    size: "sm";
+                    enabled: root.server.status != "connecting";
+                    clicked => {
+                        if (root.live) {
+                            root.disconnect();
+                        } else {
+                            root.connect();
+                        }
+                    }
+                }
+
+                AppButton {
+                    label: "Edit";
+                    variant: "ghost";
+                    size: "sm";
+                    clicked => {
+                        root.edit();
+                    }
+                }
+
+                AppButton {
+                    label: root.confirming ? "Really remove?" : "Remove";
+                    variant: root.confirming ? "danger" : "ghost";
+                    size: "sm";
+                    clicked => {
+                        root.remove();
+                    }
                 }
             }
         }
@@ -183,6 +219,10 @@ export component ConnectionManager inherits Rectangle {
     in property <[ServerRow]> servers;
     in property <int> selected-id: -1;
     in property <bool> editing: false;
+    // The add / edit form is shown only while it is in use: after New server or Edit, or when
+    // nothing is saved yet. Cancel and a successful save close it.
+    in-out property <bool> form-open: false;
+    property <bool> show-form: root.form-open || root.servers.length == 0;
     in property <string> test-state: "idle";
     in property <string> test-message;
     in property <string> form-error;
@@ -192,18 +232,25 @@ export component ConnectionManager inherits Rectangle {
     in-out property <string> draft-port;
     in-out property <string> draft-user;
     in-out property <string> draft-password;
+    in-out property <bool> draft-remember;
     in-out property <string> draft-database;
     in-out property <string> draft-env;
     in-out property <bool> draft-tls;
     in-out property <string> draft-ca-path;
+    in-out property <string> draft-metrics;
 
     callback edit(int);
     callback remove(int);
+    callback connect(int);
+    callback disconnect(int);
     callback save();
     callback test();
     callback reset();
     // Raised whenever the user changes any field, so a stale test result can be retired.
     callback draft-changed();
+
+    // The card whose Remove is armed; any other click disarms it.
+    property <int> confirm-id: -1;
 
     background: Theme.background;
     min-width: 0px;
@@ -235,20 +282,37 @@ export component ConnectionManager inherits Rectangle {
                     spacing: 1px;
 
                     Text {
-                        text: "Connection Manager";
+                        text: "Servers";
                         color: Theme.foreground;
                         font-size: Metrics.text-lg;
                         font-weight: 600;
                     }
 
                     Text {
-                        text: "Saved servers — many can stay connected at once.";
+                        text: root.servers.length == 1 ? "1 saved server" : root.servers.length + " saved servers";
                         color: Theme.muted-fg;
                         font-size: Metrics.text-sm;
                     }
                 }
 
                 Rectangle { }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "New server";
+                        icon: "plus";
+                        variant: root.show-form ? "outline" : "primary";
+                        size: "sm";
+                        clicked => {
+                            root.confirm-id = -1;
+                            root.reset();
+                            root.form-open = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -259,13 +323,6 @@ export component ConnectionManager inherits Rectangle {
             // ── Saved-server list ────────────────────────────────────────────
             VerticalLayout {
                 spacing: Metrics.s3;
-
-                Text {
-                    text: "SAVED SERVERS";
-                    color: Theme.muted-fg;
-                    font-size: Metrics.text-sm;
-                    font-weight: 600;
-                }
 
                 if root.servers.length == 0: Rectangle {
                     border-radius: Metrics.radius;
@@ -280,12 +337,13 @@ export component ConnectionManager inherits Rectangle {
                         Text {
                             text: "No servers saved yet";
                             color: Theme.foreground;
-                            font-size: Metrics.text-lg;
+                            font-size: Metrics.text-md;
+                            font-weight: 500;
                             horizontal-alignment: center;
                         }
 
                         Text {
-                            text: "Fill in the form to add the first one.\nDefaults point at a local engine on 127.0.0.1:5678.";
+                            text: "Fill in the form to add one. It starts out pointed at a\nlocal NusaDB on 127.0.0.1:5678.";
                             color: Theme.muted-fg;
                             font-size: Metrics.text-md;
                             horizontal-alignment: center;
@@ -294,7 +352,7 @@ export component ConnectionManager inherits Rectangle {
                 }
 
                 if root.servers.length > 0: cards := ScrollView {
-                    viewport-height: root.servers.length * 86px;
+                    viewport-height: root.servers.length * 92px;
 
                     VerticalLayout {
                         width: cards.visible-width;
@@ -304,11 +362,27 @@ export component ConnectionManager inherits Rectangle {
                         for server[index] in root.servers: ServerCard {
                             server: server;
                             selected: server.id == root.selected-id;
+                            confirming: server.id == root.confirm-id;
                             edit => {
+                                root.confirm-id = -1;
                                 root.edit(server.id);
+                                root.form-open = true;
                             }
                             remove => {
-                                root.remove(server.id);
+                                if (root.confirm-id == server.id) {
+                                    root.confirm-id = -1;
+                                    root.remove(server.id);
+                                } else {
+                                    root.confirm-id = server.id;
+                                }
+                            }
+                            connect => {
+                                root.confirm-id = -1;
+                                root.connect(server.id);
+                            }
+                            disconnect => {
+                                root.confirm-id = -1;
+                                root.disconnect(server.id);
                             }
                         }
                     }
@@ -316,30 +390,51 @@ export component ConnectionManager inherits Rectangle {
             }
 
             // ── Add / edit form ──────────────────────────────────────────────
-            Rectangle {
-                min-width: 300px;
+            // Scrolls: with TLS on and a message showing, the form is taller than a laptop
+            // window, and the Save button must never end up below the edge.
+            if root.show-form: Rectangle {
+                min-width: 320px;
                 max-width: 360px;
                 horizontal-stretch: 0;
                 border-radius: Metrics.radius;
                 border-width: 1px;
                 border-color: Theme.border;
                 background: Theme.card;
+                clip: true;
 
+                form-scroll := ScrollView {
                 VerticalLayout {
+                    width: form-scroll.visible-width;
                     padding: Metrics.s4;
                     spacing: Metrics.s3;
                     alignment: start;
 
-                    Text {
-                        text: root.editing ? "Edit server" : "New server";
-                        color: Theme.foreground;
-                        font-size: Metrics.text-lg;
-                        font-weight: 600;
+                    HorizontalLayout {
+                        Text {
+                            text: root.editing ? "Edit server" : "New server";
+                            horizontal-stretch: 1;
+                            color: Theme.foreground;
+                            font-size: Metrics.text-lg;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+
+                        if root.servers.length > 0: AppButton {
+                            icon: "close";
+                            tooltip: "Close";
+                            variant: "ghost";
+                            size: "sm";
+                            horizontal-stretch: 0;
+                            clicked => {
+                                root.reset();
+                                root.form-open = false;
+                            }
+                        }
                     }
 
                     FormField {
-                        label: "NAME";
-                        placeholder: "prod-jakarta";
+                        label: "Name";
+                        placeholder: "e.g. prod-jakarta";
                         text <=> root.draft-name;
                         edited => {
                             root.draft-changed();
@@ -350,7 +445,7 @@ export component ConnectionManager inherits Rectangle {
                         spacing: Metrics.s2;
 
                         FormField {
-                            label: "HOST";
+                            label: "Host";
                             placeholder: "127.0.0.1";
                             mono: true;
                             text <=> root.draft-host;
@@ -364,7 +459,7 @@ export component ConnectionManager inherits Rectangle {
                             width: 84px;
 
                             FormField {
-                                label: "PORT";
+                                label: "Port";
                                 placeholder: "5678";
                                 mono: true;
                                 text <=> root.draft-port;
@@ -376,8 +471,8 @@ export component ConnectionManager inherits Rectangle {
                     }
 
                     FormField {
-                        label: "USER";
-                        placeholder: "nusa-root";
+                        label: "User";
+                        placeholder: "nusadb-root";
                         text <=> root.draft-user;
                         edited => {
                             root.draft-changed();
@@ -385,8 +480,11 @@ export component ConnectionManager inherits Rectangle {
                     }
 
                     FormField {
-                        label: "PASSWORD";
-                        placeholder: "leave empty for trust-on-startup";
+                        label: "Password";
+                        placeholder: "Empty = trust authentication";
+                        hint: root.draft-remember
+                            ? "Kept in the system keychain, never in Studio's own files."
+                            : "Kept for this session only. Turn on Remember to keep it in the system keychain.";
                         password: true;
                         text <=> root.draft-password;
                         edited => {
@@ -394,8 +492,16 @@ export component ConnectionManager inherits Rectangle {
                         }
                     }
 
+                    Toggle {
+                        label: "Remember password";
+                        checked <=> root.draft-remember;
+                        toggled => {
+                            root.draft-changed();
+                        }
+                    }
+
                     FormField {
-                        label: "DATABASE";
+                        label: "Database";
                         placeholder: "nusadb";
                         text <=> root.draft-database;
                         edited => {
@@ -404,10 +510,10 @@ export component ConnectionManager inherits Rectangle {
                     }
 
                     Text {
-                        text: "ENVIRONMENT";
+                        text: "Environment";
                         color: Theme.muted-fg;
                         font-size: Metrics.text-sm;
-                        font-weight: 600;
+                        font-weight: 500;
                     }
 
                     HorizontalLayout {
@@ -454,11 +560,22 @@ export component ConnectionManager inherits Rectangle {
                     // Only meaningful with TLS on, and required then: the driver verifies the
                     // server against this bundle, and there is no "trust anything" fallback.
                     if root.draft-tls: FormField {
-                        label: "CA CERTIFICATE";
+                        label: "CA certificate";
                         placeholder: "/path/to/ca.pem";
                         hint: "PEM bundle the server certificate is checked against.";
                         mono: true;
                         text <=> root.draft-ca-path;
+                        edited => {
+                            root.draft-changed();
+                        }
+                    }
+
+                    FormField {
+                        label: "Metrics endpoint (optional)";
+                        placeholder: "127.0.0.1:9100";
+                        hint: "The server's --metrics-listen address, used by Monitor.";
+                        mono: true;
+                        text <=> root.draft-metrics;
                         edited => {
                             root.draft-changed();
                         }
@@ -478,8 +595,10 @@ export component ConnectionManager inherits Rectangle {
                         spacing: Metrics.s2;
 
                         AppButton {
-                            label: root.test-state == "testing" ? "Testing…" : "Test Connection";
+                            label: root.test-state == "testing" ? "Testing…" : "Test";
                             variant: "secondary";
+                            horizontal-stretch: 0;
+                            min-width: 84px;
                             enabled: root.test-state != "testing";
                             clicked => {
                                 root.test();
@@ -487,23 +606,26 @@ export component ConnectionManager inherits Rectangle {
                         }
 
                         AppButton {
-                            label: root.editing ? "Update" : "Save";
+                            label: root.editing ? "Save changes" : "Add server";
                             variant: "primary";
-                            width: 84px;
-                            horizontal-stretch: 0;
+                            horizontal-stretch: 1;
                             clicked => {
                                 root.save();
                             }
                         }
                     }
 
-                    if root.editing: AppButton {
-                        label: "Cancel edit";
+                    // With nothing saved the form is the only thing on the screen, so there is
+                    // nothing to go back to.
+                    if root.servers.length > 0: AppButton {
+                        label: "Cancel";
                         variant: "ghost";
                         clicked => {
                             root.reset();
+                            root.form-open = false;
                         }
                     }
+                }
                 }
             }
         }

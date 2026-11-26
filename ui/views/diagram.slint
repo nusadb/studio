@@ -1,0 +1,529 @@
+import { Theme, Metrics } from "../theme.slint";
+import { ErdBox } from "../models.slint";
+import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
+
+// Must match src/erd.rs.
+global Erd {
+    out property <float> box-w: 220;
+    out property <float> header-h: 30;
+    out property <float> row-h: 20;
+}
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    callback picked();
+
+    height: 22px;
+    width: chip-text.preferred-width + 16px;
+    border-radius: 11px;
+    border-width: 1px;
+    border-color: root.on ? Theme.primary : touch.has-hover ? Theme.muted-fg : Theme.border;
+    background: root.on ? Theme.primary.with-alpha(0.16) : Colors.transparent;
+
+    chip-text := Text {
+        text: root.label;
+        color: root.on ? Theme.accent-fg : Theme.sidebar-fg;
+        font-size: Metrics.text-xs;
+        font-family: Metrics.font-mono;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+}
+
+// Tables and their foreign keys, laid out left (referenced) to right (referencing). Drag a
+// box by its title, click it to follow its relations, double-click it to open its page.
+export component DiagramView inherits Rectangle {
+    // "" (no database) | "loading" | "error" | "ready"
+    in property <string> state;
+    in property <string> error;
+    in property <string> target-label;
+    in property <string> summary;
+    in property <[ErdBox]> boxes;
+    in property <string> edges;
+    in property <string> hot-edges;
+    in property <float> canvas-w: 800;
+    in property <float> canvas-h: 600;
+    in property <[string]> schemas;
+    in property <string> schema;
+    in-out property <float> zoom: 1.0;
+    in-out property <string> search;
+    // The pointer is on a box title (or dragging one): the canvas must not pan meanwhile.
+    property <bool> dragging;
+
+    callback pick-schema(string);
+    callback select(int);
+    callback open(int);
+    callback drag(int, float, float);
+    callback relayout();
+    callback export-svg();
+    callback searched(string);
+    callback reload();
+
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    // A freshly loaded diagram that does not fit is zoomed out once so every table is in view.
+    changed state => {
+        if (root.state == "ready" && canvas.width > 0
+            && (root.canvas-w * 1px > canvas.width || root.canvas-h * 1px > canvas.height)) {
+            root.zoom = max(0.25, min(1.0, min(canvas.width / 1px / root.canvas-w, canvas.height / 1px / root.canvas-h)));
+            canvas.viewport-x = 0;
+            canvas.viewport-y = 0;
+        }
+    }
+
+    function fit() {
+        root.zoom = max(0.25, min(1.25, min(canvas.width / 1px / root.canvas-w, canvas.height / 1px / root.canvas-h)));
+        canvas.viewport-x = 0;
+        canvas.viewport-y = 0;
+    }
+
+    if root.state != "ready": VerticalLayout {
+        alignment: center;
+        spacing: Metrics.s3;
+        padding: Metrics.s5;
+
+        HorizontalLayout {
+            alignment: center;
+
+            Icon {
+                name: "network";
+                tint: Theme.muted-fg;
+                size: 22px;
+            }
+        }
+
+        Text {
+            text: root.state == "loading" ? "Reading tables and foreign keys…"
+                : root.state == "error" ? "Could not read this database's tables" : "ER diagram";
+            color: Theme.foreground;
+            font-size: Metrics.text-md;
+            font-weight: 500;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: root.state == "error" ? root.error
+                : root.state == "loading" ? root.target-label
+                : "Pick a database in the navigator to draw its tables and the foreign keys between them.";
+            color: Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+
+    VerticalLayout {
+        visible: root.state == "ready";
+
+        // ── Toolbar ──────────────────────────────────────────────────────────
+        Rectangle {
+            min-height: 40px;
+            max-height: 40px;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Icon {
+                        name: "network";
+                        tint: Theme.primary;
+                        size: 15px;
+                    }
+                }
+
+                Text {
+                    text: "Diagram";
+                    color: Theme.foreground;
+                    font-size: Metrics.text-md;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Text {
+                    text: root.target-label;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Rectangle { }
+
+                Rectangle {
+                    width: 170px;
+                    height: 26px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: Metrics.radius-sm;
+                    border-width: 1px;
+                    border-color: find.has-focus ? Theme.primary : Theme.border;
+                    background: Theme.input-bg;
+
+                    Icon {
+                        x: 7px;
+                        name: "search";
+                        tint: Theme.muted-fg;
+                        size: 12px;
+                    }
+
+                    find := TextInput {
+                        x: 24px;
+                        width: parent.width - 30px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        single-line: true;
+                        text <=> root.search;
+                        font-size: Metrics.text-sm;
+                        color: Theme.foreground;
+                        edited => {
+                            root.searched(self.text);
+                        }
+                    }
+
+                    if root.search == "": Text {
+                        x: 24px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        text: "Find a table";
+                        color: Theme.gutter-fg;
+                        font-size: Metrics.text-sm;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "minus";
+                        tooltip: "Zoom out";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.zoom = max(0.25, root.zoom - 0.1);
+                        }
+                    }
+                }
+
+                Text {
+                    text: round(root.zoom * 100) + "%";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    min-width: 36px;
+                    horizontal-alignment: center;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "plus";
+                        tooltip: "Zoom in";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.zoom = min(2.0, root.zoom + 0.1);
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Fit";
+                        tooltip: "Fit the whole diagram in view";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.fit();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Re-layout";
+                        tooltip: "Put every box back where the automatic layout places it";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.relayout();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "refresh";
+                        tooltip: "Read the tables again";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.reload();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Export SVG…";
+                        icon: "download";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.export-svg();
+                        }
+                    }
+                }
+            }
+        }
+
+        // The first entry is "all"; chips only when there is more than one real schema.
+        if root.schemas.length > 2: HorizontalLayout {
+            min-height: 34px;
+            max-height: 34px;
+            padding-left: Metrics.s3;
+            spacing: Metrics.s1;
+            alignment: start;
+
+            Text {
+                text: "SCHEMA";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            Rectangle { width: Metrics.s1; }
+
+            for s in root.schemas: VerticalLayout {
+                alignment: center;
+
+                Chip {
+                    label: s == "" ? "all" : s;
+                    on: root.schema == s;
+                    picked => {
+                        root.pick-schema(s);
+                    }
+                }
+            }
+        }
+
+        // ── Canvas ───────────────────────────────────────────────────────────
+        canvas := Flickable {
+            vertical-stretch: 1;
+            interactive: !root.dragging;
+            viewport-width: max(self.width, root.canvas-w * root.zoom * 1px);
+            viewport-height: max(self.height, root.canvas-h * root.zoom * 1px);
+
+            // A click on empty canvas clears the selection.
+            TouchArea {
+                width: parent.viewport-width;
+                height: parent.viewport-height;
+                clicked => {
+                    root.select(-1);
+                }
+            }
+
+            Path {
+                x: 0;
+                y: 0;
+                width: root.canvas-w * root.zoom * 1px;
+                height: root.canvas-h * root.zoom * 1px;
+                viewbox-width: root.canvas-w;
+                viewbox-height: root.canvas-h;
+                commands: root.edges;
+                stroke: Theme.muted-fg.with-alpha(0.55);
+                stroke-width: 1.2px;
+                fill: Colors.transparent;
+            }
+
+            Path {
+                x: 0;
+                y: 0;
+                width: root.canvas-w * root.zoom * 1px;
+                height: root.canvas-h * root.zoom * 1px;
+                viewbox-width: root.canvas-w;
+                viewbox-height: root.canvas-h;
+                commands: root.hot-edges;
+                stroke: Theme.primary;
+                stroke-width: 2px;
+                fill: Colors.transparent;
+            }
+
+            for b[i] in root.boxes: Rectangle {
+                x: b.x * root.zoom * 1px;
+                y: b.y * root.zoom * 1px;
+                width: Erd.box-w * root.zoom * 1px;
+                height: b.h * root.zoom * 1px;
+                border-radius: 5px * root.zoom;
+                border-width: b.selected ? 2px : 1px;
+                border-color: b.selected ? Theme.primary : b.hit ? Theme.warning : b.related ? Theme.primary.with-alpha(0.6) : Theme.border;
+                background: Theme.card;
+                opacity: b.dim ? 0.45 : 1.0;
+                clip: true;
+
+                // Title bar: drag to move, click to select, double-click to open.
+                Rectangle {
+                    y: 0;
+                    height: Erd.header-h * root.zoom * 1px;
+                    background: b.selected ? Theme.primary.with-alpha(0.22) : Theme.muted;
+
+                    Icon {
+                        x: 8px * root.zoom;
+                        name: "table";
+                        tint: Theme.ent-table;
+                        size: 12px * root.zoom;
+                    }
+
+                    Text {
+                        x: 26px * root.zoom;
+                        width: parent.width - 34px * root.zoom;
+                        text: b.title;
+                        color: Theme.foreground;
+                        font-size: 12px * root.zoom;
+                        font-weight: 600;
+                        font-family: Metrics.font-mono;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    title-touch := TouchArea {
+                        mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+                        // The canvas would otherwise claim the press to pan; over a title
+                        // the press belongs to the box.
+                        changed has-hover => {
+                            root.dragging = self.has-hover || self.pressed;
+                        }
+                        changed pressed => {
+                            root.dragging = self.has-hover || self.pressed;
+                        }
+                        clicked => {
+                            root.select(i);
+                        }
+                        double-clicked => {
+                            root.open(i);
+                        }
+                        moved => {
+                            if (self.pressed) {
+                                root.drag(i, (self.mouse-x - self.pressed-x) / 1px / root.zoom, (self.mouse-y - self.pressed-y) / 1px / root.zoom);
+                            }
+                        }
+                    }
+                }
+
+                TouchArea {
+                    y: Erd.header-h * root.zoom * 1px;
+                    height: parent.height - self.y;
+                    clicked => {
+                        root.select(i);
+                    }
+                    double-clicked => {
+                        root.open(i);
+                    }
+                }
+
+                for c[r] in b.columns: Rectangle {
+                    x: 0;
+                    y: (Erd.header-h + 3 + r * Erd.row-h) * root.zoom * 1px;
+                    height: Erd.row-h * root.zoom * 1px;
+
+                    Text {
+                        x: 8px * root.zoom;
+                        width: 22px * root.zoom;
+                        text: c.key == "PK FK" ? "PF" : c.key;
+                        color: c.key == "FK" ? Theme.info : Theme.warning;
+                        font-size: 9px * root.zoom;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        x: 30px * root.zoom;
+                        width: 100px * root.zoom;
+                        text: c.name;
+                        color: Theme.foreground;
+                        font-size: 11px * root.zoom;
+                        font-weight: c.required ? 600 : 400;
+                        font-family: Metrics.font-mono;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        x: 128px * root.zoom;
+                        width: 84px * root.zoom;
+                        text: c.type;
+                        color: Theme.muted-fg;
+                        font-size: 10px * root.zoom;
+                        font-family: Metrics.font-mono;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                if b.more != "": Text {
+                    x: 30px * root.zoom;
+                    y: (Erd.header-h + 3 + b.columns.length * Erd.row-h) * root.zoom * 1px;
+                    height: Erd.row-h * root.zoom * 1px;
+                    text: b.more;
+                    color: Theme.muted-fg;
+                    font-size: 10px * root.zoom;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            min-height: 24px;
+            max-height: 24px;
+            background: Theme.card;
+
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            Text {
+                x: Metrics.s3;
+                text: root.summary;
+                color: Theme.muted-fg;
+                font-size: 10px;
+                vertical-alignment: center;
+                overflow: elide;
+                width: parent.width - 2 * Metrics.s3;
+            }
+        }
+    }
+}

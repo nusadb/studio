@@ -5,85 +5,121 @@ import { Icon } from "../components/icon.slint";
 import { AppButton } from "../components/app_button.slint";
 
 // One line of the tree. Indentation, the disclosure arrow, the type icon, and the trailing
-// status pill all live here so every level of the hierarchy lines up by construction.
+// badge all live here so every level of the hierarchy lines up by construction.
 component TreeItem inherits Rectangle {
     in property <TreeRow> node;
     in property <bool> selected;
     callback activated();
     callback toggled();
+    callback opened();
+    // Right-click, at this window position.
+    callback context(length, length);
 
-    // One hue per object kind — a glance at the colour says what sort of thing a row is.
     property <color> tint: root.node.kind == "server" ? Theme.ent-server
         : root.node.kind == "database" ? Theme.ent-database
         : root.node.kind == "schema" ? Theme.ent-schema
         : root.node.kind == "table" ? Theme.ent-table
-        : root.node.kind == "view" ? Theme.ent-view
-        : root.node.kind == "index" ? Theme.ent-index
-        : root.node.kind == "sequence" ? Theme.ent-sequence
-        : root.node.kind == "function" ? Theme.ent-function
-        : root.node.kind == "policy" ? Theme.ent-policy
-        : root.node.kind == "network" ? Theme.info
+        : root.node.kind == "view" || root.node.kind == "matview" ? Theme.ent-view
+        : root.node.kind == "error" ? Theme.destructive
         : Theme.ent-group;
 
     property <color> status-tone: root.node.status == "connected" ? Theme.success
         : root.node.status == "connecting" ? Theme.warning
         : root.node.status == "error" ? Theme.destructive
-        : Theme.muted-fg;
+        : Theme.gutter-fg;
+
+    // An error row selects its server, whose inspector shows the full message.
+    property <bool> interactive: root.node.kind != "hint";
 
     height: Metrics.tree-row-h;
-    border-radius: Metrics.radius-sm;
-    opacity: root.node.dimmed ? 0.45 : 1.0;
-    background: root.selected ? Theme.primary.with-alpha(0.15)
-        : touch.has-hover ? Theme.muted
+    opacity: root.node.dimmed ? 0.6 : 1.0;
+    background: root.selected ? Theme.primary.with-alpha(0.18)
+        : row-touch.has-hover && root.interactive ? Theme.sidebar-accent
         : Colors.transparent;
 
-    HorizontalLayout {
-        padding-left: 6px + root.node.depth * Metrics.tree-indent;
-        padding-right: Metrics.s2;
-        spacing: 3px;
+    // The whole-row target goes first so the disclosure arrow, declared after it, sits on top
+    // and gets its own clicks. (Declared the other way round, the row swallowed every click
+    // and the arrow could never open a node.)
+    row-touch := TouchArea {
+        enabled: root.interactive;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+                root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        clicked => {
+            root.activated();
+        }
+        double-clicked => {
+            root.opened();
+        }
+    }
 
-        // Disclosure arrow. Leaf rows keep the same 12px slot so their labels stay aligned
-        // with the labels of expandable siblings.
-        arrow := Rectangle {
-            width: 12px;
+    HorizontalLayout {
+        padding-left: 4px + root.node.depth * Metrics.tree-indent;
+        padding-right: Metrics.s2;
+        spacing: 4px;
+
+        // Disclosure arrow. Leaf rows keep the same slot so their labels stay aligned with
+        // the labels of expandable siblings.
+        Rectangle {
+            width: 16px;
             horizontal-stretch: 0;
 
             if root.node.expandable: Icon {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
                 name: root.node.expanded ? "chevron-down" : "chevron-right";
-                tint: Theme.muted-fg;
+                tint: arrow-touch.has-hover ? Theme.foreground : Theme.muted-fg;
                 size: 10px;
             }
 
-            if root.node.expandable: TouchArea {
-                mouse-cursor: MouseCursor.pointer;
+            arrow-touch := TouchArea {
+                enabled: root.node.expandable;
+                mouse-cursor: root.node.expandable ? MouseCursor.pointer : MouseCursor.default;
                 clicked => {
                     root.toggled();
                 }
             }
         }
 
-        VerticalLayout {
+        if root.node.kind != "hint": VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
 
-            Icon {
-                name: root.node.kind == "hint" ? "chevron-right" : root.node.kind;
-                tint: root.node.kind == "server" ? root.status-tone : root.tint;
-                size: 12px;
+            Rectangle {
+                width: 13px;
+                height: 13px;
+
+                Icon {
+                    name: root.node.kind;
+                    tint: root.tint;
+                    size: 13px;
+                }
+
+                // Connection state rides on the server icon as a small dot, rather than as a
+                // word-pill on every row.
+                if root.node.kind == "server": Rectangle {
+                    x: parent.width - 4px;
+                    y: parent.height - 5px;
+                    width: 7px;
+                    height: 7px;
+                    border-radius: 3.5px;
+                    border-width: 1.5px;
+                    border-color: Theme.sidebar;
+                    background: root.status-tone;
+                }
             }
         }
 
-        // The label absorbs the spare width; without an explicit stretch the layout hands the
-        // slack to the status pill instead, which then swells across the row.
         Text {
             text: root.node.label;
-            color: root.selected ? Theme.primary
+            color: root.node.kind == "error" ? Theme.destructive
                 : root.node.kind == "hint" ? Theme.muted-fg
-                : Theme.foreground;
+                : root.selected ? Theme.foreground
+                : Theme.sidebar-fg;
             font-size: Metrics.text-sm;
-            font-weight: root.selected ? 500 : 400;
+            font-weight: root.selected || root.node.kind == "server" ? 500 : 400;
             font-italic: root.node.kind == "hint";
             vertical-alignment: center;
             horizontal-alignment: left;
@@ -91,99 +127,65 @@ component TreeItem inherits Rectangle {
             overflow: elide;
         }
 
-        if root.node.status != "" && root.node.kind == "server": Rectangle {
-            horizontal-stretch: 0;
-            height: 13px;
-            border-radius: 6px;
-            border-width: 1px;
-            border-color: root.status-tone.with-alpha(0.3);
-            background: root.status-tone.with-alpha(0.1);
-
-            HorizontalLayout {
-                padding-left: 5px;
-                padding-right: 5px;
-
-                Text {
-                    text: root.node.status;
-                    color: root.status-tone;
-                    font-size: 9px;
-                    font-family: Metrics.font-mono;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
         if root.node.badge != "": Text {
             text: root.node.badge;
             color: Theme.muted-fg;
-            font-size: 9px;
+            font-size: Metrics.text-xs;
             font-family: Metrics.font-mono;
             vertical-alignment: center;
             horizontal-stretch: 0;
-        }
-    }
-
-    touch := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-        clicked => {
-            root.activated();
         }
     }
 }
 
 // Left pane: the unified multi-server navigator.
 //
-// Every connected server contributes its subtree to one list, which is the point of the pane —
-// the user works across servers without switching windows.
+// Every server contributes its subtree to one list, which is the point of the pane — the user
+// works across servers without switching windows.
 export component ObjectTree inherits Rectangle {
     in property <[TreeRow]> rows;
     in property <string> selected-id;
     in-out property <string> filter;
     callback select(string);
+    // Arrow keys and Enter while the tree has focus: "up" | "down" | "left" | "right" | "enter".
+    callback key(string);
+    callback context(string, length, length);
     callback toggle(string);
+    callback open(string);
     callback filter-changed(string);
     callback new-server();
     callback refresh();
     callback collapse-all();
 
-    // Pinned width — see the note in `activity_bar.slint`.
-    min-width: Metrics.tree-w;
-    max-width: Metrics.tree-w;
+    // Dragged from the right edge; double-click the edge to reset.
+    in-out property <length> pane-width: Metrics.tree-w;
+
+    min-width: root.pane-width;
+    max-width: root.pane-width;
     background: Theme.sidebar;
 
     Rectangle {
         x: parent.width - 1px;
         width: 1px;
         height: parent.height;
-        background: Theme.border;
+        background: edge.has-hover || edge.pressed ? Theme.primary : Theme.border;
     }
 
     VerticalLayout {
-        // ── Toolbar ──────────────────────────────────────────────────────────
+        // ── Toolbar: actions at the right, no title ─────────────────────────
         Rectangle {
-            min-height: Metrics.toolbar-h;
-            max-height: Metrics.toolbar-h;
+            min-height: Metrics.toolbar-h + 4px;
+            max-height: Metrics.toolbar-h + 4px;
             vertical-stretch: 0;
 
-            Rectangle {
-                y: parent.height - 1px;
-                width: parent.width;
-                height: 1px;
-                background: Theme.border;
-            }
-
             HorizontalLayout {
-                padding-left: Metrics.s2;
+                padding-left: Metrics.s3;
                 padding-right: Metrics.s1;
                 spacing: 0px;
 
-                Text {
-                    text: "SERVERS";
-                    color: Theme.muted-fg;
-                    font-size: Metrics.text-xs;
-                    font-weight: 600;
-                    letter-spacing: 0.6px;
-                    vertical-alignment: center;
+                // Takes the slack, so the buttons sit together at the right edge.
+                Rectangle {
+                    horizontal-stretch: 1;
                 }
 
                 VerticalLayout {
@@ -192,6 +194,7 @@ export component ObjectTree inherits Rectangle {
 
                     AppButton {
                         icon: "plus";
+                        tooltip: "Add a server";
                         variant: "ghost";
                         size: "sm";
                         clicked => {
@@ -206,6 +209,7 @@ export component ObjectTree inherits Rectangle {
 
                     AppButton {
                         icon: "refresh";
+                        tooltip: "Reload everything that is open";
                         variant: "ghost";
                         size: "sm";
                         clicked => {
@@ -220,6 +224,7 @@ export component ObjectTree inherits Rectangle {
 
                     AppButton {
                         icon: "minus";
+                        tooltip: "Collapse all";
                         variant: "ghost";
                         size: "sm";
                         clicked => {
@@ -232,29 +237,25 @@ export component ObjectTree inherits Rectangle {
 
         // ── Search ───────────────────────────────────────────────────────────
         Rectangle {
-            min-height: 32px;
-            max-height: 32px;
+            min-height: 34px;
+            max-height: 34px;
             vertical-stretch: 0;
 
             Rectangle {
-                y: parent.height - 1px;
-                width: parent.width;
-                height: 1px;
-                background: Theme.border;
-            }
-
-            Rectangle {
                 x: Metrics.s2;
-                y: 5px;
+                y: 2px;
                 width: parent.width - 2 * Metrics.s2;
-                height: 22px;
-                border-radius: Metrics.radius-sm;
-                background: Theme.muted;
+                height: 26px;
+                clip: true;
+                border-radius: Metrics.radius;
+                border-width: 1px;
+                border-color: search.has-focus ? Theme.primary : Theme.border;
+                background: Theme.input-bg;
 
                 HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
-                    spacing: 5px;
+                    padding-left: 7px;
+                    padding-right: 4px;
+                    spacing: 6px;
 
                     VerticalLayout {
                         alignment: center;
@@ -263,7 +264,7 @@ export component ObjectTree inherits Rectangle {
                         Icon {
                             name: "search";
                             tint: Theme.muted-fg;
-                            size: 11px;
+                            size: 12px;
                         }
                     }
 
@@ -274,103 +275,127 @@ export component ObjectTree inherits Rectangle {
                             text <=> root.filter;
                             font-size: Metrics.text-sm;
                             color: Theme.foreground;
-                            selection-background-color: Theme.primary;
-                            selection-foreground-color: Theme.on-primary;
+                            selection-background-color: Theme.primary.with-alpha(0.35);
+                            selection-foreground-color: Theme.foreground;
                             single-line: true;
                             edited => {
                                 root.filter-changed(search.text);
                             }
                         }
                     }
+
+                    if root.filter != "": VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+
+                        AppButton {
+                            icon: "close";
+                            tooltip: "Clear the filter";
+                            variant: "ghost";
+                            size: "sm";
+                            height: 20px;
+                            clicked => {
+                                root.filter = "";
+                                root.filter-changed("");
+                            }
+                        }
+                    }
                 }
 
                 if root.filter == "": Text {
-                    x: 22px;
+                    x: 25px;
                     y: (parent.height - self.height) / 2;
-                    text: "Search objects…";
-                    color: Theme.muted-fg;
+                    text: "Filter servers, tables…";
+                    color: Theme.gutter-fg;
                     font-size: Metrics.text-sm;
                 }
             }
         }
 
         // ── Tree ─────────────────────────────────────────────────────────────
+        // Arrow keys move the selection, Left/Right close/open, Enter opens, once a row has
+        // been clicked (which gives the tree the keyboard).
+        keys := FocusScope {
+            key-pressed(event) => {
+                if (event.text == Key.UpArrow) { root.key("up"); return accept; }
+                if (event.text == Key.DownArrow) { root.key("down"); return accept; }
+                if (event.text == Key.LeftArrow) { root.key("left"); return accept; }
+                if (event.text == Key.RightArrow) { root.key("right"); return accept; }
+                if (event.text == Key.Return) { root.key("enter"); return accept; }
+                reject
+            }
+
         list := ScrollView {
             viewport-height: root.rows.length * Metrics.tree-row-h + Metrics.s2;
 
             VerticalLayout {
                 width: list.visible-width;
-                padding-top: Metrics.s1;
-                padding-left: 2px;
-                padding-right: 2px;
+                padding-top: 2px;
                 alignment: start;
 
                 for entry[index] in root.rows: TreeItem {
                     node: entry;
                     selected: entry.id == root.selected-id;
                     activated => {
+                        keys.focus();
                         root.select(entry.id);
                     }
                     toggled => {
                         root.toggle(entry.id);
                     }
-                }
-            }
-        }
-
-        if root.rows.length == 0: Rectangle {
-            min-height: 60px;
-            max-height: 60px;
-            vertical-stretch: 0;
-
-            Text {
-                x: (parent.width - self.width) / 2;
-                y: Metrics.s4;
-                text: "No servers yet";
-                color: Theme.muted-fg;
-                font-size: Metrics.text-sm;
-            }
-        }
-
-        // The reference closes the tree with an inline "New Server" affordance, below the last
-        // node rather than only in the toolbar.
-        Rectangle {
-            min-height: 26px;
-            max-height: 26px;
-            vertical-stretch: 0;
-            border-radius: Metrics.radius-sm;
-            background: add-touch.has-hover ? Theme.muted : Colors.transparent;
-
-            HorizontalLayout {
-                padding-left: Metrics.s3;
-                padding-right: Metrics.s2;
-                spacing: 6px;
-
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
-
-                    Icon {
-                        name: "plus";
-                        tint: add-touch.has-hover ? Theme.foreground : Theme.muted-fg;
-                        size: 11px;
+                    opened => {
+                        root.open(entry.id);
+                    }
+                    context(x, y) => {
+                        root.context(entry.id, x, y);
                     }
                 }
+            }
+        }
 
-                Text {
-                    text: "New Server";
-                    color: add-touch.has-hover ? Theme.foreground : Theme.muted-fg;
-                    font-size: Metrics.text-sm;
-                    vertical-alignment: center;
-                }
+        }
+
+        if root.rows.length == 0: VerticalLayout {
+            vertical-stretch: 0;
+            padding: Metrics.s4;
+            spacing: Metrics.s2;
+
+            Text {
+                text: root.filter != "" ? "Nothing matches “" + root.filter + "”." : "No servers yet.";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-sm;
+                horizontal-alignment: center;
+                wrap: word-wrap;
             }
 
-            add-touch := TouchArea {
-                mouse-cursor: MouseCursor.pointer;
-                clicked => {
-                    root.new-server();
+            if root.filter == "": HorizontalLayout {
+                alignment: center;
+
+                AppButton {
+                    label: "Add a server";
+                    icon: "plus";
+                    variant: "outline";
+                    size: "sm";
+                    clicked => {
+                        root.new-server();
+                    }
                 }
             }
+        }
+    }
+
+    edge := TouchArea {
+        x: parent.width - 4px;
+        width: 6px;
+        height: parent.height;
+        mouse-cursor: MouseCursor.col-resize;
+        moved => {
+            if (self.pressed) {
+                root.pane-width = max(180px, min(480px, root.pane-width + self.mouse-x - self.pressed-x));
+            }
+        }
+        double-clicked => {
+            root.pane-width = Metrics.tree-w;
         }
     }
 }

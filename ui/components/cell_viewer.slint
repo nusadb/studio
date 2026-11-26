@@ -1,0 +1,249 @@
+import { Theme, Metrics } from "../theme.slint";
+import { Keys } from "../keys.slint";
+import { Icon } from "icon.slint";
+import { AppButton } from "app_button.slint";
+
+// The full value of the selected grid cell — and, on an editable table, the place to change it.
+//
+// A grid cell shows one elided line; this shows the whole value (long text, JSON, multi-line
+// notes), selectable, with Copy. When `editable` is set the text can be changed and staged with
+// Apply (or Ctrl+Enter); nothing reaches the server until the table's changes are saved.
+export component CellViewer inherits Rectangle {
+    in property <string> column;
+    in property <string> kind;
+    in property <int> row-number;
+    in property <string> value;
+    in property <bool> null;
+    in property <bool> editable;
+    // The cell belongs to a row that does not exist yet, so "use the default" is meaningful.
+    in property <bool> new-row;
+    // The cell already has a staged change that can be taken back.
+    in property <bool> staged;
+    // The text being edited; the owner seeds it with the current value.
+    in-out property <string> draft;
+    in-out property <bool> copied;
+    callback close();
+    callback apply(string);
+    callback set-null();
+    callback set-default();
+    callback revert();
+    // Ctrl+S here applies the draft and saves every staged edit, as in the grid.
+    callback save-requested();
+
+    public function focus-editor() {
+        body.focus();
+    }
+
+    background: Theme.card;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 1px;
+        background: root.editable ? Theme.primary.with-alpha(0.5) : Theme.border;
+    }
+
+    keys := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+
+        capture-key-pressed(event) => {
+            if (root.editable && event.text == Key.Return
+                && Keys.primary(event.modifiers.control, event.modifiers.meta)) {
+                root.apply(root.draft);
+                return accept;
+            }
+            if (root.editable && Keys.is(event.text, "s")
+                && Keys.primary(event.modifiers.control, event.modifiers.meta)) {
+                if (root.draft != root.value) {
+                    root.apply(root.draft);
+                }
+                root.save-requested();
+                return accept;
+            }
+            if (event.text == Key.Escape) {
+                root.close();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            padding-left: Metrics.s3;
+            padding-right: Metrics.s2;
+            padding-top: Metrics.s1;
+            padding-bottom: Metrics.s2;
+            spacing: Metrics.s1;
+
+            HorizontalLayout {
+                spacing: Metrics.s1;
+                height: 30px;
+
+                Text {
+                    text: root.column;
+                    color: Theme.foreground;
+                    font-size: Metrics.text-sm;
+                    font-weight: 600;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Text {
+                    text: "  " + root.kind + "  ·  row " + root.row-number
+                        + (root.null ? "" : "  ·  " + root.value.character-count + " chars")
+                        + (root.editable ? "  ·  " + Keys.apply + " applies" : "");
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+
+                if root.copied: VerticalLayout {
+                    alignment: center;
+
+                    Text {
+                        text: "Copied";
+                        color: Theme.success;
+                        font-size: Metrics.text-xs;
+                        font-weight: 600;
+                    }
+                }
+
+                if root.editable && root.new-row: VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Default";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.set-default();
+                        }
+                    }
+                }
+
+                if root.editable: VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Set NULL";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.set-null();
+                        }
+                    }
+                }
+
+                if root.editable && root.staged: VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Revert";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.revert();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Copy";
+                        variant: "outline";
+                        size: "sm";
+                        enabled: !root.null || root.editable;
+                        clicked => {
+                            body.select-all();
+                            body.copy();
+                            body.clear-selection();
+                            root.copied = true;
+                        }
+                    }
+                }
+
+                if root.editable: VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Apply";
+                        variant: "primary";
+                        size: "sm";
+                        clicked => {
+                            root.apply(root.draft);
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "close";
+                        tooltip: "Close (Esc)";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.close();
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: Metrics.radius-sm;
+                border-width: root.editable ? 1px : 0px;
+                border-color: body.has-focus ? Theme.primary : Theme.border;
+                background: root.editable ? Theme.input-bg : Colors.transparent;
+
+                flick := Flickable {
+                    x: root.editable ? 6px : 0px;
+                    y: root.editable ? 4px : 0px;
+                    width: parent.width - 2 * self.x;
+                    height: parent.height - 2 * self.y;
+                    viewport-height: max(self.height, body.preferred-height);
+
+                    body := TextInput {
+                        width: flick.width;
+                        text <=> root.draft;
+                        read-only: !root.editable;
+                        single-line: false;
+                        wrap: word-wrap;
+                        color: root.null && !root.editable ? Theme.gutter-fg : Theme.foreground;
+                        font-italic: root.null && !root.editable;
+                        font-size: Metrics.text-sm;
+                        font-family: Metrics.font-mono;
+                        selection-background-color: Theme.primary.with-alpha(0.35);
+                        selection-foreground-color: Theme.foreground;
+                    }
+                }
+
+                if root.editable && root.null && root.draft == "": Text {
+                    x: 6px;
+                    y: 4px;
+                    text: root.new-row && !root.staged ? "DEFAULT. Type a value." : "NULL. Type a value.";
+                    color: Theme.gutter-fg;
+                    font-size: Metrics.text-sm;
+                    font-family: Metrics.font-mono;
+                    font-italic: true;
+                }
+            }
+        }
+    }
+
+    Timer {
+        interval: 1200ms;
+        running: root.copied;
+        triggered => {
+            root.copied = false;
+        }
+    }
+}

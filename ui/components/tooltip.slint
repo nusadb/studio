@@ -1,0 +1,36 @@
+// Tooltips for icon-only buttons.
+//
+// A button cannot draw its own tooltip: toolbars clip their children, and a later sibling
+// would paint over it. So a button only *asks* — it writes the text and its window position
+// here — and the window draws one tooltip on top of everything, after a short hover delay.
+export global Tip {
+    in-out property <string> text;
+    // Anchor: the centre of the bottom edge of the hovered control, in window coordinates.
+    in-out property <length> x;
+    in-out property <length> y;
+    // A hover is in progress; the window shows the tip once it has lasted long enough.
+    in-out property <bool> armed;
+    in-out property <bool> shown;
+    // Shown to the right of the anchor (a rail icon) instead of below it.
+    in-out property <bool> beside;
+
+    public function request(text: string, x: length, y: length) {
+        self.text = text;
+        self.x = x;
+        self.y = y;
+        self.beside = false;
+        self.shown = false;
+        self.armed = true;
+    }
+
+    // For an icon on the left edge: `x`, `y` is the middle of its right edge.
+    public function request-beside(text: string, x: length, y: length) {
+        self.request(text, x, y);
+        self.beside = true;
+    }
+
+    public function dismiss() {
+        self.armed = false;
+        self.shown = false;
+    }
+}

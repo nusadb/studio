@@ -1,0 +1,803 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { GridColumn, GridRow } from "../models.slint";
+import { Icon } from "icon.slint";
+import { Keys } from "../keys.slint";
+
+// Width of the row-number column on the left of the grid.
+global Grid {
+    out property <length> gutter-w: 48px;
+}
+
+// The data grid: a sticky header, a row-number gutter, NULLs that cannot be mistaken for text,
+// keyboard navigation, and — on an editable table — editing in the cell itself.
+//
+// Keys: arrows move the selection; Enter, F2, a double-click or simply typing starts editing
+// the selected cell, and Delete or Backspace starts it empty; in the editor Enter keeps the
+// value, Esc drops it, Tab moves on. Shift+Enter (or the ⤢ button in the editor) opens the
+// cell's full value in the panel below — the place for long or multi-line values, NULL and
+// DEFAULT. A read-only grid opens that panel on Enter or double-click instead. ⌘C / Ctrl+C
+// copies the cell, ⌘S / Ctrl+S saves the staged changes (see keys.slint for the platforms).
+//
+// Columns are resized by dragging the right edge of their header; a double-click there fits
+// the column to its content.
+//
+// Selection: a click picks a cell; Shift+click, Shift+arrows or a drag extends it to a block,
+// and ⌘A / Ctrl+A takes everything. ⌘C / Ctrl+C copies the block tab-separated (it pastes into
+// a spreadsheet), ⌘V / Ctrl+V pastes a block into an editable grid from the selected cell, and
+// ⌘Z / Ctrl+Z undoes a staged edit (⇧⌘Z, Ctrl+Y or Ctrl+Shift+Z redoes). Right-click a cell or
+// a header for the rest. Every action reaches the owner as `action(name, r1, c1, r2, c2)`.
+//
+// Column widths and offsets arrive with the columns (Rust sizes them from the data), so the
+// grid never measures its own content, and header and body line up by construction.
+export component ResultGrid inherits Rectangle {
+    in property <[GridColumn]> columns;
+    in property <[GridRow]> rows;
+    // 1-based number of the first row, for paged views.
+    in property <int> first-row: 1;
+    in-out property <int> selected-row: -1;
+    in-out property <int> selected-col: -1;
+    // The other corner of a block selection; -1 when one cell is selected.
+    in-out property <int> anchor-row: -1;
+    in-out property <int> anchor-col: -1;
+    // Clicking a header asks for an ordering; the owner decides how (locally or on the server).
+    in property <bool> sortable: true;
+    in property <bool> editable;
+    // Sum of the column widths, computed in Rust alongside them.
+    in property <length> columns-width;
+
+    callback header-clicked(int);
+    // The selection moved.
+    callback cell-clicked(int, int);
+    // The selected block changed (rows r1..r2, columns c1..c2), for the status-bar numbers.
+    callback block-changed(int, int, int, int);
+    // Show the cell's whole value in the panel.
+    callback open-cell(int, int);
+    // An inline edit was kept.
+    callback commit-edit(int, int, string);
+    // ⌘S / Ctrl+S: save what is staged.
+    callback save-requested();
+    // A menu or shortcut action on the block r1,c1 – r2,c2 (inclusive, top-left first):
+    // copy, copy-headers, copy-insert, set-null, revert, filter, hide, show-all, fit, undo, redo.
+    callback action(string, int, int, int, int);
+    // ⌘V / Ctrl+V: the clipboard's text, to paste from the top-left of the selection.
+    callback paste-text(int, int, string);
+    // The column under a horizontal position (in content coordinates), for drag selection.
+    pure callback col-at(length) -> int;
+    // The Data grid can narrow its rows to a value; the Query grid cannot.
+    in property <bool> filterable;
+    // Some columns are hidden (width 0): offer "Show all columns".
+    in property <bool> has-hidden;
+    // A header edge was dragged to this width, or double-clicked to fit the content.
+    callback column-resized(int, length);
+    callback column-fit(int);
+
+    in-out property <bool> editing;
+    in-out property <string> edit-text;
+
+    property <length> content-w: Grid.gutter-w + root.columns-width;
+    property <length> row-h: Metrics.grid-row-h;
+
+    // Bumped by the owner to hand the keyboard to the grid.
+    in property <int> focus-request;
+    changed focus-request => {
+        keys.focus();
+    }
+
+    public function focus-grid() {
+        keys.focus();
+    }
+
+    // Keep the selected cell inside the visible area after the keyboard moves it.
+    function reveal() {
+        if (root.selected-row < 0) {
+            return;
+        }
+        let top = root.selected-row * root.row-h;
+        if (top < -body.viewport-y) {
+            body.viewport-y = -top;
+        } else if (top + root.row-h > -body.viewport-y + body.visible-height) {
+            body.viewport-y = -(top + root.row-h - body.visible-height);
+        }
+        if (root.selected-col >= 0 && root.selected-col < root.columns.length) {
+            let left = Grid.gutter-w + root.columns[root.selected-col].offset;
+            let right = left + root.columns[root.selected-col].width;
+            if (left - Grid.gutter-w < -body.viewport-x) {
+                body.viewport-x = -(left - Grid.gutter-w);
+            } else if (right > -body.viewport-x + body.visible-width) {
+                body.viewport-x = -(right - body.visible-width);
+            }
+        }
+    }
+
+    function select(r: int, c: int) {
+        root.select-to(r, c, false);
+    }
+
+    // Move the selected cell; with `extend` the block grows from where it started. A hidden
+    // column (width 0) is stepped over in the direction of travel.
+    function select-to(r: int, c: int, extend: bool) {
+        if (root.rows.length == 0 || root.columns.length == 0) {
+            return;
+        }
+        if (extend && root.anchor-row < 0) {
+            root.anchor-row = root.selected-row;
+            root.anchor-col = root.selected-col;
+        }
+        if (!extend) {
+            root.anchor-row = -1;
+            root.anchor-col = -1;
+        }
+        let step = c < root.selected-col ? -1 : 1;
+        let c1 = max(0, min(root.columns.length - 1, c));
+        let c2 = root.columns[c1].width > 0 ? c1 : max(0, min(root.columns.length - 1, c1 + step));
+        root.selected-row = max(0, min(root.rows.length - 1, r));
+        root.selected-col = root.columns[c2].width > 0 ? c2 : root.selected-col;
+        root.reveal();
+        root.cell-clicked(root.selected-row, root.selected-col);
+        root.block-changed(root.r1, root.c1, root.r2, root.c2);
+    }
+
+    // The selected block, corner by corner.
+    out property <int> r1: root.anchor-row < 0 ? root.selected-row : min(root.anchor-row, root.selected-row);
+    out property <int> r2: root.anchor-row < 0 ? root.selected-row : max(root.anchor-row, root.selected-row);
+    property <int> c1: root.anchor-row < 0 ? root.selected-col : min(root.anchor-col, root.selected-col);
+    property <int> c2: root.anchor-row < 0 ? root.selected-col : max(root.anchor-col, root.selected-col);
+
+    pure function in-block(r: int, c: int) -> bool {
+        return root.anchor-row >= 0 && r >= root.r1 && r <= root.r2 && c >= root.c1 && c <= root.c2;
+    }
+
+    function act(name: string) {
+        if (root.selected-row >= 0) {
+            root.action(name, root.r1, root.c1, root.r2, root.c2);
+        }
+    }
+
+    // ── Right-click menus ───────────────────────────────────────────────
+    property <length> menu-x;
+    property <length> menu-y;
+    property <bool> menu-header;
+    property <int> menu-col;
+    property <[string]> cell-items: root.editable
+        ? (root.filterable
+            ? ["Copy", "Copy with headers", "Copy as INSERT", "Copy as Markdown", "Paste", "-", "Set NULL", "Revert", "-", "Filter by this value", "Hide column"]
+            : ["Copy", "Copy with headers", "Copy as INSERT", "Copy as Markdown", "Paste", "-", "Set NULL", "Revert", "-", "Hide column"])
+        : (root.filterable
+            ? ["Copy", "Copy with headers", "Copy as INSERT", "Copy as Markdown", "-", "Filter by this value", "Hide column"]
+            : ["Copy", "Copy with headers", "Copy as INSERT", "Copy as Markdown", "-", "Hide column"]);
+    property <[string]> header-items: root.has-hidden
+        ? ["Sort ascending", "Sort descending", "-", "Copy column name", "Fit width", "Hide column", "Show all columns"]
+        : ["Sort ascending", "Sort descending", "-", "Copy column name", "Fit width", "Hide column"];
+    property <[string]> menu-items: root.menu-header ? root.header-items : root.cell-items;
+
+    function menu-pick(label: string) {
+        if (label == "Copy") { root.act("copy"); }
+        if (label == "Copy with headers") { root.act("copy-headers"); }
+        if (label == "Copy as INSERT") { root.act("copy-insert"); }
+        if (label == "Copy as Markdown") { root.act("copy-markdown"); }
+        if (label == "Paste") { root.paste(); }
+        if (label == "Set NULL") { root.act("set-null"); }
+        if (label == "Revert") { root.act("revert"); }
+        if (label == "Filter by this value") {
+            root.action("filter", root.selected-row, root.selected-col, root.selected-row, root.selected-col);
+        }
+        if (label == "Hide column") {
+            let c = root.menu-header ? root.menu-col : root.selected-col;
+            root.action("hide", -1, c, -1, c);
+        }
+        if (label == "Show all columns") { root.action("show-all", -1, -1, -1, -1); }
+        if (label == "Fit width") { root.column-fit(root.menu-col); }
+        if (label == "Sort ascending") { root.action("sort-asc", -1, root.menu-col, -1, root.menu-col); }
+        if (label == "Sort descending") { root.action("sort-desc", -1, root.menu-col, -1, root.menu-col); }
+        if (label == "Copy column name") { root.action("copy-name", -1, root.menu-col, -1, root.menu-col); }
+        keys.focus();
+    }
+
+    function paste() {
+        if (!root.editable || root.selected-row < 0) {
+            return;
+        }
+        clip.text = "";
+        clip.paste();
+        root.paste-text(root.r1, root.c1, clip.text);
+        clip.text = "";
+    }
+
+    // Slint gives Rust no clipboard to read, so a paste goes through this hidden input.
+    clip := TextInput {
+        visible: false;
+        width: 0px;
+        height: 0px;
+        single-line: false;
+    }
+
+    function current-cell-long() -> bool {
+        return root.selected-row >= 0 && root.selected-row < root.rows.length
+            && root.selected-col >= 0
+            && root.rows[root.selected-row].cells[root.selected-col].long;
+    }
+
+    // Begin editing the selected cell, seeded with `text`. A multi-line value cannot be edited
+    // on one line without losing its breaks, so it goes to the panel instead.
+    function start-edit(text: string) {
+        if (!root.editable || root.selected-row < 0 || root.selected-col < 0) {
+            return;
+        }
+        if (root.current-cell-long()) {
+            root.open-cell(root.selected-row, root.selected-col);
+            return;
+        }
+        root.edit-text = text;
+        root.editing = true;
+    }
+
+    function current-text() -> string {
+        if (root.selected-row < 0 || root.selected-col < 0 || root.selected-row >= root.rows.length) {
+            return "";
+        }
+        let cell = root.rows[root.selected-row].cells[root.selected-col];
+        return cell.null || cell.state == "default" ? "" : cell.text;
+    }
+
+    function commit() {
+        if (root.editing) {
+            root.editing = false;
+            keys.focus();
+            root.commit-edit(root.selected-row, root.selected-col, root.edit-text);
+        }
+    }
+
+    function cancel() {
+        root.editing = false;
+        keys.focus();
+    }
+
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        focus-on-click: false;
+
+        capture-key-pressed(event) => {
+            if (!root.editing) {
+                return reject;
+            }
+            if (event.text == Key.Escape) {
+                root.cancel();
+                return accept;
+            }
+            if (Keys.primary(event.modifiers.control, event.modifiers.meta) && !event.modifiers.alt
+                && Keys.is(event.text, "s")) {
+                root.commit();
+                root.save-requested();
+                return accept;
+            }
+            if (event.text == Key.Return && event.modifiers.shift) {
+                root.commit();
+                root.open-cell(root.selected-row, root.selected-col);
+                return accept;
+            }
+            if (event.text == Key.Return) {
+                root.commit();
+                return accept;
+            }
+            if (event.text == Key.Tab || event.text == Key.Backtab) {
+                root.commit();
+                root.select(root.selected-row, root.selected-col + (event.modifiers.shift || event.text == Key.Backtab ? -1 : 1));
+                return accept;
+            }
+            if (event.text == Key.UpArrow || event.text == Key.DownArrow) {
+                root.commit();
+                root.select(root.selected-row + (event.text == Key.UpArrow ? -1 : 1), root.selected-col);
+                return accept;
+            }
+            return reject;
+        }
+
+        key-pressed(event) => {
+            let m = event.modifiers;
+            if (Keys.primary(m.control, m.meta) && !m.alt && Keys.is(event.text, "s")) {
+                root.save-requested();
+                return accept;
+            }
+            let primary = Keys.primary(m.control, m.meta) && !m.alt;
+            if (primary && Keys.is(event.text, "z")) {
+                root.action(m.shift ? "redo" : "undo", -1, -1, -1, -1);
+                return accept;
+            }
+            if (primary && Keys.is(event.text, "y")) {
+                root.action("redo", -1, -1, -1, -1);
+                return accept;
+            }
+            if (primary && Keys.is(event.text, "a") && root.rows.length > 0) {
+                root.selected-row = 0;
+                root.selected-col = 0;
+                root.select-to(root.rows.length - 1, root.columns.length - 1, true);
+                return accept;
+            }
+            if (root.selected-row < 0) {
+                if (event.text == Key.DownArrow || event.text == Key.RightArrow) {
+                    root.select(0, 0);
+                    return accept;
+                }
+                return reject;
+            }
+            if (event.text == Key.Escape && root.anchor-row >= 0) {
+                root.select(root.selected-row, root.selected-col);
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.select-to(root.selected-row - 1, root.selected-col, m.shift);
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.select-to(root.selected-row + 1, root.selected-col, m.shift);
+                return accept;
+            }
+            if (event.text == Key.LeftArrow || event.text == Key.Backtab) {
+                root.select-to(root.selected-row, root.selected-col - 1, m.shift && event.text == Key.LeftArrow);
+                return accept;
+            }
+            if (event.text == Key.RightArrow || event.text == Key.Tab) {
+                root.select-to(root.selected-row, root.selected-col + 1, m.shift && event.text == Key.RightArrow);
+                return accept;
+            }
+            if (event.text == Key.Return && event.modifiers.shift) {
+                root.open-cell(root.selected-row, root.selected-col);
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == Key.F2) {
+                if (root.editable) {
+                    root.start-edit(root.current-text());
+                } else {
+                    root.open-cell(root.selected-row, root.selected-col);
+                }
+                return accept;
+            }
+            if (primary && Keys.is(event.text, "c")) {
+                root.act("copy");
+                return accept;
+            }
+            if (primary && Keys.is(event.text, "v")) {
+                root.paste();
+                return accept;
+            }
+            // Delete or Backspace (the Mac's "delete") empties the cell and starts editing it.
+            if (root.editable && (event.text == Key.Delete || event.text == Key.Backspace)
+                && !Keys.primary(m.control, m.meta)) {
+                root.start-edit("");
+                return accept;
+            }
+            // Typing over a selected cell replaces its value, as in a spreadsheet.
+            if (root.editable && Keys.types(event.text, m.control, m.alt, m.meta)) {
+                root.start-edit(event.text);
+                return accept;
+            }
+            return reject;
+        }
+
+    // Header. It sits outside the scroll view so it stays put vertically, and follows the
+    // body horizontally by reading the body's viewport offset.
+    header := Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: Metrics.grid-row-h + 2px;
+        background: Theme.card;
+        clip: true;
+
+        Rectangle {
+            x: 0;
+            y: parent.height - 1px;
+            width: parent.width;
+            height: 1px;
+            background: Theme.border;
+        }
+
+        HorizontalLayout {
+            x: body.viewport-x;
+            width: root.content-w;
+            alignment: start;
+
+            Rectangle {
+                width: Grid.gutter-w;
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    height: parent.height;
+                    background: Theme.border;
+                }
+            }
+
+            for column[c] in root.columns: Rectangle {
+                width: column.width;
+                // A hidden column keeps its place (and its index) with no width.
+                visible: column.width > 0;
+                clip: true;
+                background: head-touch.has-hover && root.sortable ? Theme.muted : Colors.transparent;
+
+                head-touch := TouchArea {
+                    mouse-cursor: root.sortable ? MouseCursor.pointer : MouseCursor.default;
+                    clicked => {
+                        if (root.sortable) {
+                            root.commit();
+                            root.header-clicked(c);
+                        }
+                    }
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                            root.commit();
+                            root.menu-header = true;
+                            root.menu-col = c;
+                            root.menu-x = self.absolute-position.x - root.absolute-position.x + self.mouse-x;
+                            root.menu-y = self.absolute-position.y - root.absolute-position.y + self.mouse-y;
+                            menu.show();
+                        }
+                    }
+                }
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    height: parent.height;
+                    background: resize-touch.has-hover || resize-touch.pressed ? Theme.primary : Theme.border;
+                }
+
+                HorizontalLayout {
+                    padding-left: Metrics.s2;
+                    padding-right: Metrics.s2;
+                    spacing: 6px;
+
+                    Text {
+                        text: column.name;
+                        color: column.sort != "" ? Theme.primary : Theme.foreground;
+                        font-size: Metrics.text-sm;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    if column.sort != "": Text {
+                        text: column.sort == "asc" ? "↑" : "↓";
+                        color: Theme.primary;
+                        font-size: Metrics.text-sm;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+
+                    Text {
+                        text: column.kind;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-xs;
+                        font-family: Metrics.font-mono;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                        horizontal-stretch: 0;
+                    }
+                }
+
+                // The right edge: drag to resize, double-click to fit. It sits inside the
+                // column, so the next column's header keeps its own clicks.
+                resize-touch := TouchArea {
+                    x: parent.width - 6px;
+                    width: 6px;
+                    mouse-cursor: MouseCursor.col-resize;
+                    moved => {
+                        if (self.pressed) {
+                            // The edge follows the pointer, so each move is measured afresh
+                            // from where it was grabbed.
+                            root.column-resized(c, max(48px, column.width + self.mouse-x - self.pressed-x));
+                        }
+                    }
+                    double-clicked => {
+                        root.column-fit(c);
+                    }
+                }
+            }
+        }
+    }
+
+    body := ScrollView {
+        x: 0;
+        y: header.height;
+        width: parent.width;
+        height: parent.height - header.height;
+        viewport-width: max(self.visible-width, root.content-w);
+        viewport-height: root.rows.length * root.row-h;
+
+        // A click below the last row still gives the grid the keyboard (Ctrl+S, Ctrl+Z…).
+        TouchArea {
+            width: max(body.visible-width, root.content-w);
+            height: max(body.visible-height, root.rows.length * root.row-h);
+            clicked => {
+                root.commit();
+                keys.focus();
+            }
+        }
+
+        for row[r] in root.rows: Rectangle {
+            x: 0;
+            y: r * root.row-h;
+            width: max(body.visible-width, root.content-w);
+            height: root.row-h;
+            background: r == root.selected-row ? Theme.primary.with-alpha(0.08)
+                : Math.mod(r, 2) == 1 ? Theme.zebra
+                : Colors.transparent;
+
+            HorizontalLayout {
+                alignment: start;
+
+                Rectangle {
+                    width: Grid.gutter-w;
+                    background: Theme.card;
+
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        height: parent.height;
+                        background: Theme.border;
+                    }
+
+                    // Clicking the row number picks the whole row; Shift extends over rows.
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        pointer-event(e) => {
+                            if (e.kind != PointerEventKind.down || e.button != PointerEventButton.left || root.columns.length == 0) {
+                                return;
+                            }
+                            root.commit();
+                            if (!e.modifiers.shift || root.anchor-row < 0) {
+                                root.anchor-row = e.modifiers.shift ? root.selected-row : r;
+                            }
+                            root.anchor-col = root.columns.length - 1;
+                            root.select-to(r, 0, true);
+                            keys.focus();
+                        }
+                    }
+
+                    Text {
+                        x: parent.width - self.width - Metrics.s2;
+                        text: root.first-row + r;
+                        color: Theme.gutter-fg;
+                        font-size: Metrics.text-xs;
+                        font-family: Metrics.font-mono;
+                        vertical-alignment: center;
+                        height: parent.height;
+                    }
+                }
+
+                for cell[c] in row.cells: Rectangle {
+                    width: c < root.columns.length ? root.columns[c].width : 120px;
+                    visible: self.width > 0;
+                    clip: true;
+                    property <bool> picked: r == root.selected-row && c == root.selected-col;
+                    property <bool> blocked: root.in-block(r, c);
+                    // Staged edits are tinted so unsaved work is visible at a glance.
+                    background: cell.state == "edited" ? Theme.warning.with-alpha(0.16)
+                        : cell.state == "deleted" ? Theme.destructive.with-alpha(0.12)
+                        : cell.state == "new" || cell.state == "default" ? Theme.success.with-alpha(0.10)
+                        : self.blocked ? Theme.primary.with-alpha(0.14)
+                        : cell-touch.has-hover && !self.picked ? Theme.muted
+                        : Colors.transparent;
+                    border-width: self.picked ? 1px : 0px;
+                    border-color: Theme.primary;
+
+                    cell-touch := TouchArea {
+                        // Press picks the cell (Shift extends the block); dragging extends it.
+                        pointer-event(e) => {
+                            if (e.kind != PointerEventKind.down) {
+                                return;
+                            }
+                            if (e.button == PointerEventButton.left) {
+                                if (!(r == root.selected-row && c == root.selected-col)) {
+                                    root.commit();
+                                }
+                                root.select-to(r, c, e.modifiers.shift);
+                                keys.focus();
+                            }
+                            if (e.button == PointerEventButton.right) {
+                                root.commit();
+                                // A right-click inside the block keeps it; elsewhere it picks.
+                                if (!root.in-block(r, c)) {
+                                    root.select(r, c);
+                                }
+                                keys.focus();
+                                root.menu-header = false;
+                                root.menu-x = self.absolute-position.x - root.absolute-position.x + self.mouse-x;
+                                root.menu-y = self.absolute-position.y - root.absolute-position.y + self.mouse-y;
+                                menu.show();
+                            }
+                        }
+                        moved => {
+                            if (self.pressed) {
+                                let tr = r + floor(self.mouse-y / root.row-h);
+                                let tc = root.col-at(root.columns[c].offset + self.mouse-x);
+                                if (tr != root.selected-row || tc != root.selected-col) {
+                                    root.select-to(tr, tc, true);
+                                }
+                            }
+                        }
+                        double-clicked => {
+                            root.select(r, c);
+                            if (root.editable) {
+                                root.start-edit(root.current-text());
+                            } else {
+                                root.open-cell(r, c);
+                            }
+                        }
+                    }
+
+                    // A row marked for deletion is struck through.
+                    if cell.state == "deleted": Rectangle {
+                        x: Metrics.s1;
+                        y: parent.height / 2;
+                        width: parent.width - 2 * Metrics.s1;
+                        height: 1px;
+                        background: Theme.destructive.with-alpha(0.7);
+                    }
+
+                    if !(r == root.selected-row && c == root.selected-col && root.editing): Text {
+                        x: Metrics.s2;
+                        width: parent.width - 2 * Metrics.s2 - (cell.long ? 12px : 0px);
+                        height: parent.height;
+                        text: cell.state == "default" ? "DEFAULT" : cell.null ? "NULL" : cell.text;
+                        color: cell.state == "deleted" ? Theme.muted-fg
+                            : cell.null || cell.state == "default" ? Theme.gutter-fg
+                            : Theme.foreground;
+                        font-italic: cell.null || cell.state == "default";
+                        font-size: Metrics.text-sm;
+                        font-family: Metrics.font-mono;
+                        vertical-alignment: center;
+                        horizontal-alignment: (c < root.columns.length && root.columns[c].numeric && !cell.null)
+                            ? right : left;
+                        overflow: elide;
+                    }
+
+                    // A value with line breaks says so; it is edited in the panel.
+                    if cell.long && !(r == root.selected-row && c == root.selected-col && root.editing): Text {
+                        x: parent.width - 14px;
+                        height: parent.height;
+                        text: "¶";
+                        color: Theme.gutter-fg;
+                        font-size: Metrics.text-xs;
+                        vertical-alignment: center;
+                    }
+
+                    // ── Inline editor ────────────────────────────────────────
+                    if r == root.selected-row && c == root.selected-col && root.editing: Rectangle {
+                        background: Theme.input-bg;
+                        border-width: 2px;
+                        border-color: Theme.primary;
+
+                        editor := TextInput {
+                            x: Metrics.s2 - 1px;
+                            width: parent.width - Metrics.s2 - 22px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            single-line: true;
+                            text <=> root.edit-text;
+                            font-size: Metrics.text-sm;
+                            font-family: Metrics.font-mono;
+                            color: Theme.foreground;
+                            selection-background-color: Theme.primary.with-alpha(0.35);
+                            selection-foreground-color: Theme.foreground;
+                            init => {
+                                self.focus();
+                                // Offsets past the end are clamped: this puts the caret last.
+                                self.set-selection-offsets(2147483647, 2147483647);
+                            }
+                        }
+
+                        expand := Rectangle {
+                            x: parent.width - 20px;
+                            y: (parent.height - 16px) / 2;
+                            width: 16px;
+                            height: 16px;
+                            border-radius: 3px;
+                            background: expand-touch.has-hover ? Theme.muted : Colors.transparent;
+
+                            Icon {
+                                x: 2px;
+                                y: 2px;
+                                name: "open";
+                                tint: Theme.muted-fg;
+                                size: 12px;
+                            }
+
+                            expand-touch := TouchArea {
+                                clicked => {
+                                    root.commit();
+                                    root.open-cell(root.selected-row, root.selected-col);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    }
+
+    // A result with columns but no rows says so, rather than looking unfinished.
+    if root.rows.length == 0 && root.columns.length > 0: Text {
+        y: Metrics.grid-row-h + 24px;
+        x: 0;
+        width: root.width;
+        text: "No rows";
+        color: Theme.muted-fg;
+        font-size: Metrics.text-sm;
+        horizontal-alignment: center;
+    }
+
+    // One menu for cells and headers, drawn above everything (it is not clipped by the grid).
+    menu := PopupWindow {
+        x: min(root.menu-x, root.width - 214px);
+        y: min(root.menu-y, root.height - self.height - 4px);
+        width: 210px;
+        height: menu-list.preferred-height + 8px;
+
+        Rectangle {
+            border-radius: Metrics.radius;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.popover;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000040;
+            drop-shadow-offset-y: 3px;
+
+            menu-list := VerticalLayout {
+                y: 4px;
+                height: self.preferred-height;
+
+                for label in root.menu-items: Rectangle {
+                    height: label == "-" ? 9px : 26px;
+
+                    if label == "-": Rectangle {
+                        x: 8px;
+                        width: parent.width - 16px;
+                        height: 1px;
+                        background: Theme.border;
+                    }
+
+                    if label != "-": Rectangle {
+                        x: 4px;
+                        width: parent.width - 8px;
+                        border-radius: Metrics.radius-sm;
+                        background: item-touch.has-hover ? Theme.primary.with-alpha(0.18) : Colors.transparent;
+
+                        Text {
+                            x: 10px;
+                            text: label;
+                            color: Theme.foreground;
+                            font-size: Metrics.text-sm;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            x: parent.width - self.width - 10px;
+                            text: label == "Copy" ? Keys.copy : label == "Paste" ? Keys.paste : "";
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-xs;
+                            vertical-alignment: center;
+                        }
+
+                        item-touch := TouchArea {
+                            clicked => {
+                                root.menu-pick(label);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

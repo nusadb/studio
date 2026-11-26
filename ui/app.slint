@@ -1,81 +1,76 @@
 // NusaDB Studio — window shell.
 //
 // This file only composes: it owns the window chrome and the properties/callbacks the Rust
-// controller binds to, and delegates every pixel to a view. Screens land under `views/`,
+// controller binds to, and delegates every pixel to a view. Screens live under `views/`,
 // reusable pieces under `components/`, and all colours/sizes come from `theme.slint`.
 //
-// The layout follows the three-pane native-IDE arrangement of the visual reference:
-//
 //   ┌──────────────────────── TopBar ────────────────────────┐
-//   │ rail │ object tree │      screen      │   inspector    │
+//   │ rail │ navigator │       screen       │   inspector    │
 //   └─────────────────────── StatusBar ──────────────────────┘
 
+// The UI and code faces ship inside the binary, so the editor is monospaced and the layout
+// measures the same on every machine — a fallback to a proportional face would misalign the
+// editor's colour layer and its input layer.
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/JetBrainsMonoNL-Regular.ttf";
+import "fonts/JetBrainsMonoNL-Medium.ttf";
+import "fonts/JetBrainsMonoNL-Italic.ttf";
+
 import { Theme, Metrics } from "theme.slint";
-import { ServerRow, TreeRow, Property, SqlLine, SqlToken, GridColumn } from "models.slint";
+import { Keys } from "keys.slint";
+export { Keys }
+import { ProfileStore, VectorStore, PivotStore, SelectionStore } from "stores.slint";
+export { ProfileStore, VectorStore, PivotStore, SelectionStore }
+import {
+    ServerRow, TreeRow, Property, SqlLayer, GridColumn, GridCell, GridRow, MessageRow, ResultPart, ChartBar, ChartPoint, ChartTick, ChartSlice, HistoryRow,
+    PlanRow, QueryTabRow, CompletionRow, DesignColumn, DesignIndex, InspectorSection,
+    SecRole, SecMember, SecGrantRow, SecTable, SecPolicy, MonTile, MonDb, MonXact,
+    DetailTab, DetailRow, DetailSection, ErdColumn, ErdBox, NotifyRow, ImportColumn,
+    ProfileBar, ProfileCard, CorrCell, CorrRow, VectorColumn
+} from "models.slint";
+import { ImportDialog } from "views/import_dialog.slint";
+import { PromptDialog } from "views/prompt_dialog.slint";
+import { SettingsView } from "views/settings.slint";
+import { DiagramView } from "views/diagram.slint";
+import { MonitorView } from "views/monitor.slint";
+import { SecurityView } from "views/security.slint";
 import { TopBar } from "views/top_bar.slint";
 import { ActivityBar } from "views/activity_bar.slint";
 import { ObjectTree } from "views/object_tree.slint";
 import { Inspector } from "views/inspector.slint";
 import { Workspace } from "views/workspace.slint";
+import { DataView } from "views/data_view.slint";
+import { Designer } from "views/designer.slint";
 import { ConnectionManager } from "views/connection_manager.slint";
 import { StatusBar } from "views/status_bar.slint";
-
-// Stand-in for a rail destination whose screen has not been built yet. It says so plainly
-// rather than showing a blank pane, so the rail never looks broken.
-component ComingSoon inherits Rectangle {
-    in property <string> title;
-
-    // A screen must never dictate the window's minimum size — with several of them side by
-    // side as conditional siblings, their minimums add up and the window ends up unable to
-    // shrink, clipping the inspector and the status bar out of view.
-    background: Theme.background;
-    min-width: 0px;
-    min-height: 0px;
-    clip: true;
-
-    VerticalLayout {
-        alignment: center;
-        spacing: Metrics.s2;
-        padding-left: Metrics.s5;
-        padding-right: Metrics.s5;
-
-        Text {
-            text: root.title;
-            color: Theme.foreground;
-            font-size: Metrics.text-xl;
-            horizontal-alignment: center;
-        }
-
-        Text {
-            text: "Not built yet — this screen is on the way.";
-            color: Theme.muted-fg;
-            font-size: Metrics.text-md;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-    }
-}
+import { ConfirmDialog } from "views/confirm_dialog.slint";
+import { Tip } from "components/tooltip.slint";
 
 // Re-exported so the generated Rust bindings expose the row structs and the theme switch.
-export { ServerRow, TreeRow, Property, SqlLine, SqlToken, GridColumn, Theme }
+export {
+    ServerRow, TreeRow, Property, SqlLayer, GridColumn, GridCell, GridRow, MessageRow, ResultPart, HistoryRow, PlanRow,
+    ChartBar, ChartPoint, ChartTick, ChartSlice, ProfileBar, ProfileCard, CorrCell, CorrRow, VectorColumn,
+    QueryTabRow, CompletionRow, DesignColumn, DesignIndex, InspectorSection, Theme, Metrics
+}
 
 export component AppWindow inherits Window {
     title: "NusaDB Studio";
+    icon: @image-url("../packaging/icons/nusadb-studio-256.png");
     default-font-size: Metrics.text-md;
     default-font-family: Metrics.font-ui;
     background: Theme.background;
-    // Sized to open fully visible on a 1366x768 laptop panel — the common floor for a desktop
-    // tool. A preferred height taller than the screen pushes the status bar under the edge of
-    // the display, which reads as a missing status bar.
-    preferred-width: 1180px;
-    preferred-height: 680px;
-    min-width: 880px;
-    min-height: 520px;
+    // Opens fully visible on a 1366x768 laptop panel — the common floor for a desktop tool.
+    preferred-width: 1240px;
+    preferred-height: 700px;
+    min-width: 960px;
+    min-height: 540px;
 
-    // ── Navigation (pure UI state, owned by the view) ────────────────────────
+    // ── Navigation ───────────────────────────────────────────────────────────
     in-out property <string> screen: "workspace";
 
-    // ── Object tree ──────────────────────────────────────────────────────────
+    // ── Navigator ────────────────────────────────────────────────────────────
     in property <[TreeRow]> tree-rows;
     in property <string> selected-node;
     in-out property <string> tree-filter;
@@ -83,29 +78,280 @@ export component AppWindow inherits Window {
     // ── Inspector ────────────────────────────────────────────────────────────
     in property <string> inspector-title;
     in property <string> inspector-kind;
+    in property <string> inspector-subtitle;
     in property <[Property]> inspector-properties;
+    in property <[InspectorSection]> inspector-sections;
+    in property <string> inspector-definition;
+    in property <string> inspector-comment;
+    in property <[string]> inspector-notes;
+    in property <[string]> inspector-actions;
+    in property <[string]> inspector-maintenance;
+    // The right-click menu for the selected navigator row: actions, "-", maintenance.
+    in property <[string]> context-actions;
+    property <bool> menu-open;
+    property <length> menu-x;
+    property <length> menu-y;
 
-    // ── Workspace ────────────────────────────────────────────────────────────
-    in property <[SqlLine]> sql-lines;
+    // ── Query screen ─────────────────────────────────────────────────────────
+    in property <[SqlLayer]> sql-layers;
+    in property <string> sql-line-numbers;
+    in-out property <string> sql-text;
     in property <[GridColumn]> grid-columns;
-    in property <string> server-crumb: "—";
-    in property <string> database-crumb: "—";
-    in property <string> schema-crumb: "public";
+    in property <length> grid-columns-width;
+    in property <[GridRow]> grid-rows;
+    in property <[MessageRow]> messages;
+    in property <[ResultPart]> result-parts;
+    in property <int> result-part;
+    callback pick-part(int);
+    // Editor / results split on the Query screen, remembered in settings.json.
+    in-out property <float> editor-share: 0.42;
+    callback split-moved(float);
+    in property <[string]> chart-columns;
+    in property <string> chart-kind;
+    in property <int> chart-x;
+    in property <int> chart-y;
+    in property <string> chart-agg;
+    in property <[ChartBar]> chart-bars;
+    in property <[ChartPoint]> chart-points;
+    in property <string> chart-line;
+    in property <[ChartTick]> chart-x-ticks;
+    in property <[ChartTick]> chart-y-ticks;
+    in property <string> chart-x-title;
+    in property <string> chart-y-title;
+    in property <string> chart-note;
+    callback chart-opened();
+    callback chart-set(string, int, string);
+    callback chart-copy-data();
+    in property <int> chart-series;
+    in property <string> chart-order;
+    in property <int> chart-top;
+    in property <[ChartSlice]> chart-slices;
+    in property <[string]> chart-legend;
+    callback chart-export();
+    callback chart-copy();
+    in property <string> json-text;
+    in property <[PlanRow]> plan-rows;
+    in property <[HistoryRow]> history;
+    in-out property <int> grid-selected-row: -1;
+    in-out property <int> grid-selected-col: -1;
+    in property <bool> cell-open;
+    in property <string> cell-column;
+    in property <string> cell-kind;
+    in property <string> cell-value;
+    in property <bool> cell-null;
+    in property <string> target-label;
+    in property <bool> has-target;
+    in property <bool> running;
+    in property <string> txn-state: "idle";
     in property <string> result-summary;
+    in property <string> rows-note;
+    in property <bool> has-error;
+    in-out property <string> result-tab: "results";
 
-    // ── Connection state ─────────────────────────────────────────────────────
+    // ── Data screen ──────────────────────────────────────────────────────────
+    in property <string> data-object-label;
+    in property <string> data-object-kind: "table";
+    in property <string> data-target-label;
+    in property <[GridColumn]> data-columns;
+    in property <length> data-columns-width;
+    in property <[GridRow]> data-rows;
+    in property <int> data-first-row: 1;
+    in property <string> data-range-label;
+    in property <bool> data-can-prev;
+    in property <bool> data-can-next;
+    in property <bool> data-loading;
+    in property <string> data-error;
+    in-out property <string> data-filter;
+    in-out property <int> data-selected-row: -1;
+    in-out property <int> data-selected-col: -1;
+    in property <bool> data-cell-open;
+    in property <string> data-cell-column;
+    in property <string> data-cell-kind;
+    in property <string> data-cell-value;
+    in property <bool> data-cell-null;
+    in property <bool> data-editable;
+    in property <string> data-read-only-reason;
+    in property <int> data-pending;
+    in property <bool> data-saving;
+    in property <bool> data-cell-new-row;
+    in property <bool> data-cell-staged;
+    in-out property <string> data-cell-draft;
+
+    // ── Designer screen ──────────────────────────────────────────────────────
+    in property <string> design-mode;
+    in property <string> design-original;
+    in property <string> design-target;
+    in-out property <string> design-schema;
+    in-out property <string> design-name;
+    in property <[DesignColumn]> design-columns;
+    in-out property <int> design-selected: -1;
+    in property <string> design-ddl;
+    in property <string> design-problem;
+    in property <bool> design-has-changes;
+    in property <bool> design-applying;
+    in property <[DesignIndex]> design-indexes;
+    in-out property <string> design-tab: "columns";
+    callback design-index-field(int, string, string);
+    callback design-index-unique(int, bool);
+    callback design-add-index();
+    callback design-remove-index(int);
+    callback design-new();
+    callback design-renamed(string, string);
+    callback design-field(int, string, string);
+    callback design-flag(int, string, bool);
+    callback design-add();
+    callback design-remove(int);
+    callback design-set-type(int, string);
+    callback design-apply();
+
+    // Security
+    in property <string> sec-state;
+    in property <string> sec-error;
+    in property <string> sec-target;
+    in property <string> sec-notes;
+    in property <bool> sec-roles-editable;
+    in property <bool> sec-rls-editable;
+    in-out property <string> sec-tab: "roles";
+    in-out property <string> sec-role-tab: "privileges";
+    in property <[SecRole]> sec-roles;
+    in property <int> sec-role-selected: -1;
+    in property <string> sec-role-name;
+    in property <bool> sec-role-pseudo;
+    in property <bool> sec-role-new;
+    in property <bool> sec-role-dropped;
+    in property <[bool]> sec-flags;
+    in property <[bool]> sec-flags-changed;
+    in property <[SecMember]> sec-member-of;
+    in property <[string]> sec-can-join;
+    in property <[string]> sec-members;
+    in property <[string]> sec-privileges;
+    in property <[SecGrantRow]> sec-grants;
+    in property <[SecTable]> sec-tables;
+    in property <int> sec-table-selected: -1;
+    in property <string> sec-table-label;
+    in property <bool> sec-policy-allowed;
+    in property <string> sec-policy-blocked;
+    in property <[SecPolicy]> sec-policies;
+    in property <string> sec-ddl;
+    in property <string> sec-problem;
+    in property <bool> sec-has-changes;
+    in property <bool> sec-applying;
+    callback sec-refresh();
+    callback sec-revert();
+    callback sec-apply();
+    callback sec-select-role(int);
+    callback sec-new-role(string);
+    callback sec-drop-role();
+    callback sec-flag(int, bool);
+    callback sec-join(string);
+    callback sec-leave(string);
+    callback sec-admin(string, bool);
+    callback sec-grant-cycle(int, int);
+    callback sec-grant-row(int);
+    callback sec-grant-column(int);
+    callback sec-select-table(int);
+    callback sec-rls(int, bool);
+    callback sec-add-policy();
+    callback sec-remove-policy(int);
+    callback sec-policy-field(int, string, string);
+    // The rail moved to another screen.
+    callback screen-picked(string);
+
+    // Import
+    in property <bool> imp-open;
+    in property <string> imp-table;
+    in property <string> imp-file;
+    in property <string> imp-summary;
+    in property <bool> imp-json;
+    in property <string> imp-delimiter;
+    in property <bool> imp-header;
+    in property <bool> imp-empty-null;
+    in property <[ImportColumn]> imp-columns;
+    in property <[string]> imp-preview-headers;
+    in property <[DetailRow]> imp-preview;
+    in property <string> imp-defaults;
+    in property <string> imp-problem;
+    in property <bool> imp-busy;
+    in property <int> imp-rows;
+    callback data-import();
+    callback imp-set-delimiter(string);
+    callback imp-set-header(bool);
+    callback imp-set-empty-null(bool);
+    callback imp-toggle(int, bool);
+    callback imp-cancel();
+    callback imp-run();
+
+    // LISTEN / NOTIFY
+    in property <[NotifyRow]> notify-rows;
+    in property <[string]> notify-channels;
+    in property <string> notify-status;
+    in property <bool> notify-failed;
+    callback notify-listen(string);
+    callback notify-unlisten(string);
+    callback notify-send(string, string);
+    callback notify-clear();
+
+    // ER diagram
+    in property <string> erd-state;
+    in property <string> erd-error;
+    in property <string> erd-target;
+    in property <string> erd-summary;
+    in property <[ErdBox]> erd-boxes;
+    in property <string> erd-edges;
+    in property <string> erd-hot-edges;
+    in property <float> erd-canvas-w: 800;
+    in property <float> erd-canvas-h: 600;
+    in property <[string]> erd-schemas;
+    in property <string> erd-schema;
+    in-out property <float> erd-zoom: 1.0;
+    in-out property <string> erd-search;
+    callback erd-pick-schema(string);
+    callback erd-select(int);
+    callback erd-open(int);
+    callback erd-drag(int, float, float);
+    callback erd-relayout();
+    callback erd-export();
+    callback erd-searched(string);
+    callback erd-reload();
+
+    // Monitor
+    in property <string> mon-state;
+    in property <string> mon-server;
+    in property <string> mon-endpoint;
+    in property <string> mon-error;
+    in property <bool> mon-paused;
+    in property <bool> mon-stale;
+    in property <string> mon-updated;
+    in property <[MonTile]> mon-tiles;
+    in property <string> mon-totals;
+    in property <[MonDb]> mon-databases;
+    in property <string> mon-backup-last;
+    in property <string> mon-backup-detail;
+    in property <bool> mon-backup-alert;
+    in property <[MonXact]> mon-xacts;
+    in property <string> mon-xacts-note;
+    in property <string> mon-xacts-database;
+    callback mon-toggle-pause();
+    callback mon-edit-endpoint();
+    callback mon-retry();
+    callback mon-refresh-xacts();
+    callback mon-xact(int, string);
+    callback design-reset();
+
+    // ── Connection state (top bar) ───────────────────────────────────────────
     in property <bool> connected: false;
-    in property <string> connection-label: "No connection";
+    in property <string> connection-label: "Not connected";
     in property <string> connection-status: "disconnected";
+    in property <string> connection-env;
 
     // ── Status bar ───────────────────────────────────────────────────────────
-    in property <string> status-server: "no server";
-    in property <string> status-database: "—";
-    in property <string> status-rows: "0 rows";
-    in property <string> status-timing: "—";
+    in property <string> status-server: "Not connected";
+    in property <string> status-database;
+    in property <string> status-rows;
+    in property <string> status-timing;
     in property <string> version: "0.1.0";
 
-    // ── Connection Manager screen ────────────────────────────────────────────
+    // ── Servers screen ───────────────────────────────────────────────────────
     in property <[ServerRow]> servers;
     in property <int> selected-id: -1;
     in property <bool> editing: false;
@@ -122,74 +368,215 @@ export component AppWindow inherits Window {
     in-out property <string> draft-env: "dev";
     in-out property <bool> draft-tls;
     in-out property <string> draft-ca-path;
+    in-out property <string> draft-metrics;
+    in-out property <bool> server-form-open;
+    in-out property <bool> draft-remember;
 
     // ── Intents raised by the UI ─────────────────────────────────────────────
     callback filter-changed(string);
     callback select-node(string);
     callback toggle-node(string);
+    callback open-node(string);
     callback refresh-tree();
     callback collapse-tree();
-    callback select-server(int);
+    callback inspector-action(string);
+    callback tree-key(string);
+    callback file-open();
+    callback file-save();
+    callback file-save-as();
+    in-out property <bool> find-open;
+    in-out property <bool> find-replace;
+    in-out property <string> find-text;
+    in-out property <string> replace-text;
+    in-out property <bool> find-case;
+    in property <string> find-status;
+    in property <int> select-end: -1;
+    in property <int> reveal-line;
+    in property <int> reveal-col;
+    in property <int> reveal-serial;
+    callback find-changed(string, bool);
+    callback find-step(bool);
+    callback replace-one();
+    callback replace-all();
+    callback format-sql();
+
+    callback sql-edited(string, int);
+    callback sql-caret(int);
+    in property <[CompletionRow]> completions;
+    in-out property <int> completion-index;
+    in property <int> completion-line;
+    in property <int> completion-col;
+    in property <int> caret-target;
+    in property <int> caret-serial;
+    callback complete-request(string, int);
+    callback complete-accept(int);
+    callback complete-cancel();
+    callback run-script();
+    callback explain-current(int, int);
+    callback run-current(int, int);
+    callback stop-script();
+    callback txn(string);
+    in property <[QueryTabRow]> query-tabs;
+    callback tab-new();
+    callback tab-select(int);
+    callback tab-close(int);
+    callback grid-sort(int);
+    callback grid-cell(int, int);
+    callback grid-close-cell();
+    callback pick-history(int);
+    // Column widths (drag a header edge, double-click to fit) and copying a cell.
+    callback grid-column-resized(int, length);
+    callback grid-column-fit(int);
+    // The theme was switched; Rust remembers it.
+    callback theme-changed(bool);
+    callback grid-action(string, int, int, int, int);
+    callback grid-paste(int, int, string);
+    pure callback grid-col-at(length) -> int;
+    in property <bool> grid-has-hidden;
+    in-out property <int> grid-anchor-row: -1;
+    in-out property <int> grid-anchor-col: -1;
+    callback data-column-resized(int, length);
+    callback data-column-fit(int);
+    callback data-grid-action(string, int, int, int, int);
+    callback data-paste(int, int, string);
+    pure callback data-col-at(length) -> int;
+    in property <bool> data-has-hidden;
+    in-out property <int> data-anchor-row: -1;
+    in-out property <int> data-anchor-col: -1;
+    // Editing a Query result read from one table.
+    in property <bool> results-editable;
+    in property <string> results-read-only;
+    in property <int> results-pending;
+    in property <bool> results-saving;
+    in property <string> results-error;
+    in property <bool> results-cell-staged;
+    in-out property <string> cell-draft;
+    callback grid-cell-commit(int, int, string);
+    callback grid-cell-apply(string);
+    callback grid-cell-set-null();
+    callback grid-cell-revert();
+    callback grid-save();
+    callback grid-discard();
+
+    callback data-apply-filter(string);
+    callback data-prev();
+    callback data-next();
+    callback data-reload();
+    callback data-open-in-query();
+    // Object page tabs (Data, Columns, Indexes…, DDL).
+    in property <[DetailTab]> data-tabs;
+    in-out property <string> data-tab: "data";
+    in property <DetailSection> data-section;
+    // Navigator id of the object the Data screen's page shows.
+    in property <string> data-page-id;
+    callback data-pick-tab(string);
+    callback data-open-code(string);
+    callback data-sort(int);
+    callback data-cell(int, int);
+    callback data-close-cell();
+    callback data-add-row();
+    callback data-delete-row(int, int);
+    in property <int> data-sample;
+    callback data-pick-sample(int);
+    callback data-discard();
+    callback data-save();
+    callback data-cell-apply(string);
+    callback data-cell-commit(int, int, string);
+    callback data-cell-set-null();
+    callback data-cell-default();
+    callback data-cell-revert();
+
     callback edit-server(int);
     callback remove-server(int);
+    callback connect-server(int);
+    callback disconnect-server(int);
     callback save-server();
     callback test-connection();
     callback reset-form();
     callback draft-changed();
-    // Raised on the UI thread once a connection attempt finishes, carrying the outcome as
-    // (state, message). The probe answers from a network task, so this is the hop back.
-    callback probe-finished(string, string);
+    // ── Clipboard and notices ────────────────────────────────────────────────
+    // A short message in the corner: "Exported 500 rows to …". `toast-serial` changes on every
+    // new message so a repeat of the same text still restarts the timer.
+    in property <string> toast-text;
+    in property <bool> toast-error;
+    in property <int> toast-serial;
+    callback copy-row();
+    callback copy-all();
+    callback export-result();
+    callback data-copy-row();
+    callback data-export();
 
-    // ── Responsive tiers ─────────────────────────────────────────────────────
-    //
-    // The window is the only place that may measure itself: a pane that picks its children
-    // from its own width creates a binding loop, because those children are what the width is
-    // computed from. Assigning from a `changed` handler is imperative, so it breaks the cycle;
-    // the defaults match the preferred window size, which is what the first frame uses.
-    // They start at the compact tier on purpose. Slint derives the window's minimum size from
-    // its content, so a toolbar that shows everything by default makes the window unable to
-    // shrink — on a smaller screen it is then clipped, taking the inspector and the status bar
-    // out of view. Starting small and widening once the real geometry arrives inverts that.
-    property <bool> mid: true;
-    property <bool> roomy: true;
-
-    changed width => {
-        // A resize can report a transient zero before the real geometry arrives; acting on it
-        // would strand the toolbars in their narrowest form.
-        if (root.width > 1px) {
-            // Thresholds account for what the toolbars share the row with: the rail (44),
-            // the tree (224) and the inspector (256) are 524px before the centre pane gets
-            // anything, so the full toolbar only fits well past that.
-            root.mid = root.width > 1000px;
-            root.roomy = root.width > 1200px;
-        }
+    // Slint has no clipboard call from Rust, so text goes out through a hidden input.
+    public function copy-text(text: string) {
+        clipboard.text = text;
+        clipboard.select-all();
+        clipboard.copy();
+        clipboard.clear-selection();
     }
 
-    // The Connection Manager owns its own tree-less layout, and the screens that are wide
-    // dashboards have nothing for the inspector to describe.
-    //
-    // The panes are not gated on width: rail + tree + centre-minimum + inspector comes to
-    // 804px, which always fits inside the window's own 960px minimum. Responsiveness happens
-    // inside the toolbars instead, where thinning the controls costs the user nothing.
-    property <bool> show-tree: root.screen != "connections";
-    property <bool> show-inspector: root.screen == "workspace"
-        || root.screen == "datagrid"
-        || root.screen == "designer"
-        || root.screen == "explain";
+    // ── Name dialog (new database / schema, rename, duplicate) ──────────────
+    in property <bool> prompt-open;
+    in property <string> prompt-title;
+    in property <string> prompt-subtitle;
+    in-out property <string> prompt-value;
+    in property <string> prompt-check-label;
+    in-out property <bool> prompt-checked;
+    in property <string> prompt-accept-label;
+    in property <string> prompt-error;
+    callback prompt-accept();
+    callback prompt-cancel();
+
+    // ── Confirmation dialog ──────────────────────────────────────────────────
+    in property <bool> confirm-open;
+    in property <string> confirm-title;
+    in property <string> confirm-subtitle;
+    in property <[string]> confirm-reasons;
+    in property <[bool]> confirm-codes;
+    in property <bool> confirm-bullets;
+    in property <string> confirm-accept-label: "Run anyway";
+    callback confirm-accept();
+    callback confirm-cancel();
+
+    // Raised on the UI thread once a connection test finishes, carrying (state, message).
+    callback probe-finished(string, string);
+
+    property <bool> show-tree: root.screen != "connections" && root.screen != "settings";
+    // Settings (Settings screen), loaded and saved by Rust.
+    in-out property <int> setting-page-size: 200;
+    in-out property <bool> setting-details;
+    in-out property <int> setting-result-rows: 1000;
+    in-out property <int> setting-history: 100;
+    in property <string> about-version;
+    in property <string> about-driver;
+    in property <string> about-folder;
+    callback settings-changed();
+    // The details panel is off until asked for (the top-bar button): every action in it is
+    // also on the navigator's right-click menu, and an object's full details have their own
+    // page, so by default the work gets the whole width.
+    in-out property <bool> inspector-visible: false;
+    in-out property <length> navigator-width: Metrics.tree-w;
+    // When asked for, it appears where it has something to say: on the screens that work on one
+    // object (Query, Data, Design) and once something is selected in the navigator. Monitor,
+    // Security and Servers are whole-width screens of their own.
+    property <bool> show-inspector: root.inspector-visible && root.selected-node != ""
+        && (root.screen == "workspace" || root.screen == "datagrid" || root.screen == "designer")
+        // The object page already shows everything about its object; never show it twice.
+        && !(root.screen == "datagrid" && root.selected-node == root.data-page-id);
 
     VerticalLayout {
         TopBar {
             connection-label: root.connection-label;
             connection-status: root.connection-status;
             connected: root.connected;
-            roomy: root.roomy;
-            mid: root.mid;
+            env: root.connection-env;
             vertical-stretch: 0;
             open-connections => {
                 root.screen = "connections";
             }
-            toggle-theme => {
-                Theme.dark = !Theme.dark;
+            inspector-visible: root.inspector-visible;
+            inspector-available: root.screen == "workspace" || root.screen == "datagrid" || root.screen == "designer";
+            toggle-inspector => {
+                root.inspector-visible = !root.inspector-visible;
             }
         }
 
@@ -199,6 +586,7 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 0;
                 pick(next) => {
                     root.screen = next;
+                    root.screen-picked(next);
                 }
             }
 
@@ -206,12 +594,25 @@ export component AppWindow inherits Window {
                 rows: root.tree-rows;
                 selected-id: root.selected-node;
                 filter <=> root.tree-filter;
+                pane-width <=> root.navigator-width;
                 horizontal-stretch: 0;
                 select(id) => {
                     root.select-node(id);
                 }
+                key(k) => {
+                    root.tree-key(k);
+                }
+                context(id, x, y) => {
+                    root.select-node(id);
+                    root.menu-x = x;
+                    root.menu-y = y;
+                    root.menu-open = root.context-actions.length > 0;
+                }
                 toggle(id) => {
                     root.toggle-node(id);
+                }
+                open(id) => {
+                    root.open-node(id);
                 }
                 filter-changed(text) => {
                     root.filter-changed(text);
@@ -228,31 +629,498 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // Screen host.
-            //
-            // Every screen lives inside this one element rather than as a row of conditional
-            // siblings. A layout sizes its children from their position in the child list, and
-            // a long run of conditionals makes that mapping unreliable — the panes after them
-            // ended up with no width at all. One host keeps the row at four children, and each
-            // screen simply fills it.
-            host := VerticalLayout {
-
+            // Screen host. Every screen lives inside this one element rather than as a row
+            // of conditional siblings, so the row always has the same four children.
+            VerticalLayout {
                 if root.screen == "workspace": Workspace {
-                    lines: root.sql-lines;
+                    layers: root.sql-layers;
+                    line-numbers: root.sql-line-numbers;
+                    sql-text <=> root.sql-text;
                     columns: root.grid-columns;
-                    server-crumb: root.server-crumb;
-                    database-crumb: root.database-crumb;
-                    schema-crumb: root.schema-crumb;
-                    connected: root.connected;
+                    columns-width: root.grid-columns-width;
+                    rows: root.grid-rows;
+                    messages: root.messages;
+                    result-parts: root.result-parts;
+                    result-part: root.result-part;
+                    editor-share <=> root.editor-share;
+                    chart-columns: root.chart-columns;
+                    chart-kind: root.chart-kind;
+                    chart-x: root.chart-x;
+                    chart-y: root.chart-y;
+                    chart-agg: root.chart-agg;
+                    chart-bars: root.chart-bars;
+                    chart-points: root.chart-points;
+                    chart-line: root.chart-line;
+                    chart-x-ticks: root.chart-x-ticks;
+                    chart-y-ticks: root.chart-y-ticks;
+                    chart-x-title: root.chart-x-title;
+                    chart-y-title: root.chart-y-title;
+                    chart-note: root.chart-note;
+                    chart-opened => {
+                        root.chart-opened();
+                    }
+                    chart-set(what, n, t) => {
+                        root.chart-set(what, n, t);
+                    }
+                    chart-copy-data => {
+                        root.chart-copy-data();
+                    }
+                    chart-series: root.chart-series;
+                    chart-order: root.chart-order;
+                    chart-top: root.chart-top;
+                    chart-slices: root.chart-slices;
+                    chart-legend: root.chart-legend;
+                    chart-export => {
+                        root.chart-export();
+                    }
+                    chart-copy => {
+                        root.chart-copy();
+                    }
+                    split-moved(share) => {
+                        root.split-moved(share);
+                    }
+                    pick-part(i) => {
+                        root.pick-part(i);
+                    }
+                    json-text: root.json-text;
+                    plan-rows: root.plan-rows;
+                    history: root.history;
+                    selected-row <=> root.grid-selected-row;
+                    selected-col <=> root.grid-selected-col;
+                    cell-open: root.cell-open;
+                    cell-column: root.cell-column;
+                    cell-kind: root.cell-kind;
+                    cell-value: root.cell-value;
+                    cell-null: root.cell-null;
+                    cell-draft <=> root.cell-draft;
+                    results-editable: root.results-editable;
+                    results-read-only: root.results-read-only;
+                    results-pending: root.results-pending;
+                    results-saving: root.results-saving;
+                    results-error: root.results-error;
+                    cell-staged: root.results-cell-staged;
+                    column-resized(c, w) => { root.grid-column-resized(c, w); }
+                    column-fit(c) => { root.grid-column-fit(c); }
+                    grid-action(n, r1, c1, r2, c2) => { root.grid-action(n, r1, c1, r2, c2); }
+                    paste-text(r, c, t) => { root.grid-paste(r, c, t); }
+                    col-at(x) => { return root.grid-col-at(x); }
+                    has-hidden: root.grid-has-hidden;
+                    anchor-row <=> root.grid-anchor-row;
+                    anchor-col <=> root.grid-anchor-col;
+                    cell-commit(r, c, t) => { root.grid-cell-commit(r, c, t); }
+                    cell-apply(t) => { root.grid-cell-apply(t); }
+                    cell-set-null => { root.grid-cell-set-null(); }
+                    cell-revert => { root.grid-cell-revert(); }
+                    save-results => { root.grid-save(); }
+                    discard-results => { root.grid-discard(); }
+                    sort(c) => {
+                        root.grid-sort(c);
+                    }
+                    cell(r, c) => {
+                        root.grid-cell(r, c);
+                    }
+                    close-cell => {
+                        root.grid-close-cell();
+                    }
+                    pick-history(i) => {
+                        root.pick-history(i);
+                    }
+                    notify-rows: root.notify-rows;
+                    notify-channels: root.notify-channels;
+                    notify-status: root.notify-status;
+                    notify-failed: root.notify-failed;
+                    notify-listen(c) => { root.notify-listen(c); }
+                    notify-unlisten(c) => { root.notify-unlisten(c); }
+                    notify-send(c, p) => { root.notify-send(c, p); }
+                    notify-clear => { root.notify-clear(); }
+                    tabs: root.query-tabs;
+                    find-open <=> root.find-open;
+                    find-replace <=> root.find-replace;
+                    find-text <=> root.find-text;
+                    replace-text <=> root.replace-text;
+                    find-case <=> root.find-case;
+                    find-status: root.find-status;
+                    select-end: root.select-end;
+                    reveal-line: root.reveal-line;
+                    reveal-col: root.reveal-col;
+                    reveal-serial: root.reveal-serial;
+                    find-changed(t, c) => { root.find-changed(t, c); }
+                    find-step(f) => { root.find-step(f); }
+                    replace-one => { root.replace-one(); }
+                    replace-all => { root.replace-all(); }
+                    format-sql => { root.format-sql(); }
+                    file-open => {
+                        root.file-open();
+                    }
+                    file-save => {
+                        root.file-save();
+                    }
+                    file-save-as => {
+                        root.file-save-as();
+                    }
+                    tab-new => {
+                        root.tab-new();
+                    }
+                    tab-select(id) => {
+                        root.tab-select(id);
+                    }
+                    tab-close(id) => {
+                        root.tab-close(id);
+                    }
+                    copy-row => {
+                        root.copy-row();
+                    }
+                    copy-all => {
+                        root.copy-all();
+                    }
+                    export => {
+                        root.export-result();
+                    }
+                    target-label: root.target-label;
+                    has-target: root.has-target;
+                    running: root.running;
+                    txn-state: root.txn-state;
                     result-summary: root.result-summary;
-                    roomy: root.roomy;
-                    mid: root.mid;
+                    rows-note: root.rows-note;
+                    has-error: root.has-error;
+                    result-tab <=> root.result-tab;
+                    caret-moved(at) => {
+                        root.sql-caret(at);
+                    }
+                    edited(text, caret) => {
+                        root.sql-edited(text, caret);
+                    }
+                    completions: root.completions;
+                    completion-index <=> root.completion-index;
+                    completion-line: root.completion-line;
+                    completion-col: root.completion-col;
+                    caret-target: root.caret-target;
+                    caret-serial: root.caret-serial;
+                    complete-request(text, caret) => {
+                        root.complete-request(text, caret);
+                    }
+                    complete-accept(i) => {
+                        root.complete-accept(i);
+                    }
+                    complete-cancel => {
+                        root.complete-cancel();
+                    }
+                    run => {
+                        root.run-script();
+                    }
+                    explain(c, a) => {
+                        root.explain-current(c, a);
+                    }
+                    run-current(c, a) => {
+                        root.run-current(c, a);
+                    }
+                    stop => {
+                        root.stop-script();
+                    }
+                    txn(statement) => {
+                        root.txn(statement);
+                    }
+                    open-servers => {
+                        root.screen = "connections";
+                    }
+                }
+
+                if root.screen == "datagrid": DataView {
+                    import => {
+                        root.data-import();
+                    }
+                    tabs: root.data-tabs;
+                    tab: root.data-tab;
+                    section: root.data-section;
+                    pick-tab(id) => {
+                        root.data-pick-tab(id);
+                    }
+                    copy-code(code) => {
+                        root.copy-text(code);
+                    }
+                    open-code(code) => {
+                        root.data-open-code(code);
+                    }
+                    object-label: root.data-object-label;
+                    object-kind: root.data-object-kind;
+                    target-label: root.data-target-label;
+                    columns: root.data-columns;
+                    columns-width: root.data-columns-width;
+                    rows: root.data-rows;
+                    first-row: root.data-first-row;
+                    range-label: root.data-range-label;
+                    can-prev: root.data-can-prev;
+                    can-next: root.data-can-next;
+                    loading: root.data-loading;
+                    error: root.data-error;
+                    filter <=> root.data-filter;
+                    selected-row <=> root.data-selected-row;
+                    selected-col <=> root.data-selected-col;
+                    cell-open: root.data-cell-open;
+                    cell-column: root.data-cell-column;
+                    cell-kind: root.data-cell-kind;
+                    cell-value: root.data-cell-value;
+                    cell-null: root.data-cell-null;
+                    editable: root.data-editable;
+                    read-only-reason: root.data-read-only-reason;
+                    pending: root.data-pending;
+                    saving: root.data-saving;
+                    cell-new-row: root.data-cell-new-row;
+                    cell-staged: root.data-cell-staged;
+                    cell-draft <=> root.data-cell-draft;
+                    add-row => {
+                        root.data-add-row();
+                    }
+                    copy-row => {
+                        root.data-copy-row();
+                    }
+                    export => {
+                        root.data-export();
+                    }
+                    sample: root.data-sample;
+                    pick-sample(p) => {
+                        root.data-pick-sample(p);
+                    }
+                    delete-row(a, b) => {
+                        root.data-delete-row(a, b);
+                    }
+                    discard => {
+                        root.data-discard();
+                    }
+                    save => {
+                        root.data-save();
+                    }
+                    cell-apply(text) => {
+                        root.data-cell-apply(text);
+                    }
+                    cell-commit(r, c, text) => {
+                        root.data-cell-commit(r, c, text);
+                    }
+                    cell-set-null => {
+                        root.data-cell-set-null();
+                    }
+                    cell-default => {
+                        root.data-cell-default();
+                    }
+                    cell-revert => {
+                        root.data-cell-revert();
+                    }
+                    column-resized(c, w) => { root.data-column-resized(c, w); }
+                    column-fit(c) => { root.data-column-fit(c); }
+                    grid-action(n, r1, c1, r2, c2) => { root.data-grid-action(n, r1, c1, r2, c2); }
+                    paste-text(r, c, t) => { root.data-paste(r, c, t); }
+                    col-at(x) => { return root.data-col-at(x); }
+                    has-hidden: root.data-has-hidden;
+                    anchor-row <=> root.data-anchor-row;
+                    anchor-col <=> root.data-anchor-col;
+                    sort(c) => {
+                        root.data-sort(c);
+                    }
+                    cell(r, c) => {
+                        root.data-cell(r, c);
+                    }
+                    close-cell => {
+                        root.data-close-cell();
+                    }
+                    apply-filter(text) => {
+                        root.data-apply-filter(text);
+                    }
+                    prev-page => {
+                        root.data-prev();
+                    }
+                    next-page => {
+                        root.data-next();
+                    }
+                    reload => {
+                        root.data-reload();
+                    }
+                    open-in-query => {
+                        root.data-open-in-query();
+                    }
+                }
+
+                if root.screen == "designer": Designer {
+                    // A selected table is one click from being edited.
+                    suggest-table: root.selected-node != "" && root.inspector-kind == "table" ? root.inspector-title : "";
+                    edit-suggested => {
+                        root.inspector-action("Edit structure…");
+                    }
+                    mode: root.design-mode;
+                    original-name: root.design-original;
+                    target-label: root.design-target;
+                    schema <=> root.design-schema;
+                    table-name <=> root.design-name;
+                    columns: root.design-columns;
+                    selected <=> root.design-selected;
+                    ddl: root.design-ddl;
+                    problem: root.design-problem;
+                    has-changes: root.design-has-changes;
+                    applying: root.design-applying;
+                    has-target: root.has-target;
+                    indexes: root.design-indexes;
+                    tab <=> root.design-tab;
+                    index-edited(i, field, value) => {
+                        root.design-index-field(i, field, value);
+                    }
+                    index-unique(i, on) => {
+                        root.design-index-unique(i, on);
+                    }
+                    add-index => {
+                        root.design-add-index();
+                    }
+                    remove-index(i) => {
+                        root.design-remove-index(i);
+                    }
+                    new-table => {
+                        root.design-new();
+                    }
+                    renamed(schema, name) => {
+                        root.design-renamed(schema, name);
+                    }
+                    field-edited(i, field, value) => {
+                        root.design-field(i, field, value);
+                    }
+                    flag-toggled(i, flag, on) => {
+                        root.design-flag(i, flag, on);
+                    }
+                    add-column => {
+                        root.design-add();
+                    }
+                    remove-column(i) => {
+                        root.design-remove(i);
+                    }
+                    set-type(type) => {
+                        root.design-set-type(root.design-selected, type);
+                    }
+                    apply => {
+                        root.design-apply();
+                    }
+                    reset => {
+                        root.design-reset();
+                    }
+                }
+
+                if root.screen == "diagram": DiagramView {
+                    state: root.erd-state;
+                    error: root.erd-error;
+                    target-label: root.erd-target;
+                    summary: root.erd-summary;
+                    boxes: root.erd-boxes;
+                    edges: root.erd-edges;
+                    hot-edges: root.erd-hot-edges;
+                    canvas-w: root.erd-canvas-w;
+                    canvas-h: root.erd-canvas-h;
+                    schemas: root.erd-schemas;
+                    schema: root.erd-schema;
+                    zoom <=> root.erd-zoom;
+                    search <=> root.erd-search;
+                    pick-schema(s) => { root.erd-pick-schema(s); }
+                    select(i) => { root.erd-select(i); }
+                    open(i) => { root.erd-open(i); }
+                    drag(i, dx, dy) => { root.erd-drag(i, dx, dy); }
+                    relayout => { root.erd-relayout(); }
+                    export-svg => { root.erd-export(); }
+                    searched(t) => { root.erd-searched(t); }
+                    reload => { root.erd-reload(); }
+                }
+
+                if root.screen == "monitor": MonitorView {
+                    state: root.mon-state;
+                    server: root.mon-server;
+                    endpoint: root.mon-endpoint;
+                    error: root.mon-error;
+                    paused: root.mon-paused;
+                    stale: root.mon-stale;
+                    updated: root.mon-updated;
+                    tiles: root.mon-tiles;
+                    totals: root.mon-totals;
+                    databases: root.mon-databases;
+                    backup-last: root.mon-backup-last;
+                    backup-detail: root.mon-backup-detail;
+                    backup-alert: root.mon-backup-alert;
+                    xacts: root.mon-xacts;
+                    xacts-note: root.mon-xacts-note;
+                    xacts-database: root.mon-xacts-database;
+                    toggle-pause => { root.mon-toggle-pause(); }
+                    edit-endpoint => { root.mon-edit-endpoint(); }
+                    retry => { root.mon-retry(); }
+                    refresh-xacts => { root.mon-refresh-xacts(); }
+                    xact(i, action) => { root.mon-xact(i, action); }
+                }
+
+                if root.screen == "security": SecurityView {
+                    state: root.sec-state;
+                    error: root.sec-error;
+                    target-label: root.sec-target;
+                    notes: root.sec-notes;
+                    roles-editable: root.sec-roles-editable;
+                    rls-editable: root.sec-rls-editable;
+                    tab <=> root.sec-tab;
+                    role-tab <=> root.sec-role-tab;
+                    roles: root.sec-roles;
+                    role-selected: root.sec-role-selected;
+                    role-name: root.sec-role-name;
+                    role-pseudo: root.sec-role-pseudo;
+                    role-new: root.sec-role-new;
+                    role-dropped: root.sec-role-dropped;
+                    flags: root.sec-flags;
+                    flags-changed: root.sec-flags-changed;
+                    member-of: root.sec-member-of;
+                    can-join: root.sec-can-join;
+                    members: root.sec-members;
+                    privileges: root.sec-privileges;
+                    grants: root.sec-grants;
+                    tables: root.sec-tables;
+                    table-selected: root.sec-table-selected;
+                    table-label: root.sec-table-label;
+                    policy-allowed: root.sec-policy-allowed;
+                    policy-blocked: root.sec-policy-blocked;
+                    policies: root.sec-policies;
+                    ddl: root.sec-ddl;
+                    problem: root.sec-problem;
+                    has-changes: root.sec-has-changes;
+                    applying: root.sec-applying;
+                    refresh => { root.sec-refresh(); }
+                    revert => { root.sec-revert(); }
+                    apply => { root.sec-apply(); }
+                    select-role(i) => { root.sec-select-role(i); }
+                    new-role(name) => { root.sec-new-role(name); }
+                    drop-role => { root.sec-drop-role(); }
+                    flag(i, on) => { root.sec-flag(i, on); }
+                    join(r) => { root.sec-join(r); }
+                    leave(r) => { root.sec-leave(r); }
+                    admin(r, on) => { root.sec-admin(r, on); }
+                    grant-cycle(r, c) => { root.sec-grant-cycle(r, c); }
+                    grant-row(r) => { root.sec-grant-row(r); }
+                    grant-column(c) => { root.sec-grant-column(c); }
+                    select-table(i) => { root.sec-select-table(i); }
+                    rls(i, on) => { root.sec-rls(i, on); }
+                    add-policy => { root.sec-add-policy(); }
+                    remove-policy(i) => { root.sec-remove-policy(i); }
+                    policy-field(i, f, v) => { root.sec-policy-field(i, f, v); }
+                }
+
+                if root.screen == "settings": SettingsView {
+                    page-size <=> root.setting-page-size;
+                    details-panel <=> root.setting-details;
+                    result-rows <=> root.setting-result-rows;
+                    history <=> root.setting-history;
+                    version: root.about-version;
+                    driver: root.about-driver;
+                    folder: root.about-folder;
+                    copy(text) => {
+                        root.copy-text(text);
+                    }
+                    changed => {
+                        root.settings-changed();
+                    }
                 }
 
                 if root.screen == "connections": ConnectionManager {
                     servers: root.servers;
                     selected-id: root.selected-id;
                     editing: root.editing;
+                    form-open <=> root.server-form-open;
                     test-state: root.test-state;
                     test-message: root.test-message;
                     form-error: root.form-error;
@@ -265,11 +1133,19 @@ export component AppWindow inherits Window {
                     draft-env <=> root.draft-env;
                     draft-tls <=> root.draft-tls;
                     draft-ca-path <=> root.draft-ca-path;
+                    draft-metrics <=> root.draft-metrics;
+                    draft-remember <=> root.draft-remember;
                     edit(id) => {
                         root.edit-server(id);
                     }
                     remove(id) => {
                         root.remove-server(id);
+                    }
+                    connect(id) => {
+                        root.connect-server(id);
+                    }
+                    disconnect(id) => {
+                        root.disconnect-server(id);
                     }
                     save => {
                         root.save-server();
@@ -284,41 +1160,23 @@ export component AppWindow inherits Window {
                         root.draft-changed();
                     }
                 }
-
-                if root.screen == "datagrid": ComingSoon {
-                    title: "Table Data Editor";
-                }
-
-                if root.screen == "designer": ComingSoon {
-                    title: "Object Designer";
-                }
-
-                if root.screen == "explain": ComingSoon {
-                    title: "EXPLAIN Plan";
-                }
-
-                if root.screen == "monitor": ComingSoon {
-                    title: "Fleet Monitoring";
-                }
-
-                if root.screen == "roles": ComingSoon {
-                    title: "Users & Security";
-                }
-
-                if root.screen == "advanced": ComingSoon {
-                    title: "Advanced SQL";
-                }
-
-                if root.screen == "backups": ComingSoon {
-                    title: "Backups & Branches";
-                }
             }
 
             if root.show-inspector: Inspector {
                 title: root.inspector-title;
                 kind: root.inspector-kind;
+                subtitle: root.inspector-subtitle;
                 properties: root.inspector-properties;
+                sections: root.inspector-sections;
+                definition: root.inspector-definition;
+                comment: root.inspector-comment;
+                notes: root.inspector-notes;
+                actions: root.inspector-actions;
+                maintenance: root.inspector-maintenance;
                 horizontal-stretch: 0;
+                action(label) => {
+                    root.inspector-action(label);
+                }
             }
         }
 
@@ -326,10 +1184,282 @@ export component AppWindow inherits Window {
             status: root.connection-status;
             server: root.status-server;
             database: root.status-database;
-            rows: root.status-rows;
-            timing: root.status-timing;
-            version: "NusaDB Studio " + root.version;
+            // Row count and timing describe the Query result; other screens show their own.
+            rows: root.screen == "workspace" ? root.status-rows : "";
+            timing: root.screen == "workspace" || root.screen == "datagrid" ? root.status-timing : "";
+            txn: root.txn-state;
+            version: "v" + root.version;
             vertical-stretch: 0;
+        }
+    }
+
+    // ── Context menu ────────────────────────────────────────────────────────
+    if root.menu-open: TouchArea {
+        // A click anywhere else closes it.
+        clicked => {
+            root.menu-open = false;
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                root.menu-open = false;
+            }
+        }
+    }
+
+    if root.menu-open: menu := Rectangle {
+        property <length> item-h: 26px;
+        property <length> rows-h: menu-items.preferred-height;
+        // The item under the keyboard (↑ ↓, Enter), or under the pointer.
+        property <int> hot: -1;
+
+        // One step up or down, over a separator (two never sit together).
+        function step(d: int) {
+            let n = root.context-actions.length;
+            if (n == 0) {
+                return;
+            }
+            // Nothing picked yet: ↓ starts at the first item, ↑ at the last.
+            let from = self.hot >= 0 ? self.hot : (d > 0 ? -1 : 0);
+            let i = Math.mod(from + d + n, n);
+            self.hot = root.context-actions[i] == "-" ? Math.mod(i + d + n, n) : i;
+        }
+
+        menu-keys := FocusScope {
+            init => {
+                self.focus();
+            }
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.menu-open = false;
+                    return accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    menu.step(1);
+                    return accept;
+                }
+                if (event.text == Key.UpArrow) {
+                    menu.step(-1);
+                    return accept;
+                }
+                if (event.text == Key.Return && menu.hot >= 0) {
+                    root.menu-open = false;
+                    root.inspector-action(root.context-actions[menu.hot]);
+                    return accept;
+                }
+                return reject;
+            }
+        }
+        x: min(root.menu-x, root.width - self.width - 4px);
+        y: min(root.menu-y, root.height - self.height - 4px);
+        width: 210px;
+        height: self.rows-h + 8px;
+        border-radius: Metrics.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.popover;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000055;
+        drop-shadow-offset-y: 3px;
+
+        menu-items := VerticalLayout {
+            y: 4px;
+            height: self.preferred-height;
+
+            for label[i] in root.context-actions: Rectangle {
+                height: label == "-" ? 9px : menu.item-h;
+
+                if label == "-": Rectangle {
+                    x: 8px;
+                    width: parent.width - 16px;
+                    height: 1px;
+                    background: Theme.border;
+                }
+
+                if label != "-": Rectangle {
+                    x: 4px;
+                    width: parent.width - 8px;
+                    border-radius: Metrics.radius-sm;
+                    // Destructive entries say so in red, the rest in the normal colour.
+                    property <bool> danger: label == "Truncate…" || label == "Drop…";
+                    background: menu.hot == i
+                        ? (self.danger ? Theme.destructive.with-alpha(0.16) : Theme.primary.with-alpha(0.18))
+                        : Colors.transparent;
+
+                    Text {
+                        x: 10px;
+                        text: label;
+                        color: parent.danger ? Theme.destructive : Theme.foreground;
+                        font-size: Metrics.text-sm;
+                        vertical-alignment: center;
+                    }
+
+                    item-touch := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                menu.hot = i;
+                            }
+                        }
+                        clicked => {
+                            root.menu-open = false;
+                            root.inspector-action(label);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.imp-open: ImportDialog {
+        table: root.imp-table;
+        file: root.imp-file;
+        summary: root.imp-summary;
+        json: root.imp-json;
+        delimiter: root.imp-delimiter;
+        header: root.imp-header;
+        empty-null: root.imp-empty-null;
+        columns: root.imp-columns;
+        preview-headers: root.imp-preview-headers;
+        preview: root.imp-preview;
+        defaults-note: root.imp-defaults;
+        problem: root.imp-problem;
+        busy: root.imp-busy;
+        row-count: root.imp-rows;
+        set-delimiter(d) => { root.imp-set-delimiter(d); }
+        set-header(on) => { root.imp-set-header(on); }
+        set-empty-null(on) => { root.imp-set-empty-null(on); }
+        toggle-column(i, on) => { root.imp-toggle(i, on); }
+        cancel => { root.imp-cancel(); }
+        import => { root.imp-run(); }
+    }
+
+    if root.prompt-open: PromptDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        title: root.prompt-title;
+        subtitle: root.prompt-subtitle;
+        value <=> root.prompt-value;
+        check-label: root.prompt-check-label;
+        checked <=> root.prompt-checked;
+        accept-label: root.prompt-accept-label;
+        error: root.prompt-error;
+        accept => {
+            root.prompt-accept();
+        }
+        cancel => {
+            root.prompt-cancel();
+        }
+    }
+
+    if root.confirm-open: ConfirmDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        title: root.confirm-title;
+        subtitle: root.confirm-subtitle;
+        reasons: root.confirm-reasons;
+        codes: root.confirm-codes;
+        bullets: root.confirm-bullets;
+        accept-label: root.confirm-accept-label;
+        accept => {
+            root.confirm-accept();
+        }
+        cancel => {
+            root.confirm-cancel();
+        }
+    }
+
+    clipboard := TextInput {
+        x: -10000px;
+        y: -10000px;
+        width: 1px;
+        height: 1px;
+        visible: false;
+        single-line: false;
+    }
+
+    property <bool> toast-shown;
+
+    changed toast-serial => {
+        root.toast-shown = root.toast-text != "";
+    }
+
+    Timer {
+        interval: 3500ms;
+        running: root.toast-shown;
+        triggered => {
+            root.toast-shown = false;
+        }
+    }
+
+    if root.toast-shown: Rectangle {
+        x: root.width - self.width - Metrics.s4;
+        // Above the "not saved yet" bar of the grids, so it never covers Discard / Save.
+        y: root.height - self.height - Metrics.statusbar-h - 56px;
+        width: min(toast-row.preferred-width, 520px);
+        height: 36px;
+        border-radius: Metrics.radius;
+        border-width: 1px;
+        border-color: root.toast-error ? Theme.destructive.with-alpha(0.6) : Theme.border;
+        background: Theme.popover;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: #00000055;
+
+        toast-row := HorizontalLayout {
+            padding-left: Metrics.s3;
+            padding-right: Metrics.s3;
+            spacing: Metrics.s2;
+
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 3.5px;
+                background: root.toast-error ? Theme.destructive : Theme.success;
+            }
+
+            Text {
+                text: root.toast-text;
+                color: Theme.foreground;
+                font-size: Metrics.text-sm;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        TouchArea {
+            clicked => {
+                root.toast-shown = false;
+            }
+        }
+    }
+
+    // ── Tooltip overlay ──────────────────────────────────────────────────────
+    Timer {
+        interval: 450ms;
+        running: Tip.armed && !Tip.shown;
+        triggered => {
+            Tip.shown = true;
+        }
+    }
+
+    if Tip.shown: tip := Rectangle {
+        width: tip-text.preferred-width + 16px;
+        height: 24px;
+        x: Tip.beside ? Tip.x + 6px : max(4px, min(Tip.x - self.width / 2, root.width - self.width - 4px));
+        // Flip above the anchor when there is no room below (status bar buttons).
+        y: Tip.beside ? Tip.y - self.height / 2
+            : Tip.y + self.height > root.height - 4px ? Tip.y - self.height - 36px : Tip.y;
+        border-radius: Metrics.radius-sm;
+        background: Theme.dark ? #3A3D44 : #1E2125;
+
+        tip-text := Text {
+            text: Tip.text;
+            color: #FFFFFF;
+            font-size: Metrics.text-xs;
         }
     }
 }

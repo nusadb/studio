@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=NusaDB Studio
+GenericName=Database Manager
+Comment=Query, browse, design and administer NusaDB databases
+Exec=nusadb-studio %f
+Icon=nusadb-studio
+Terminal=false
+Categories=Development;Database;
+Keywords=nusadb;sql;database;query;
+MimeType=application/sql;
+StartupWMClass=nusadb-studio

@@ -1,5 +1,6 @@
 import { Theme, Metrics } from "../theme.slint";
 import { Icon } from "icon.slint";
+import { Tip } from "tooltip.slint";
 
 // The one button in Studio. Named `AppButton` rather than `Button` so it never collides with
 // the widget of the same name in `std-widgets.slint`, whose platform styling would fight the
@@ -14,6 +15,9 @@ export component AppButton inherits Rectangle {
     in property <string> size: "md";
     in property <string> icon;
     in property <bool> enabled: true;
+    // Shown on hover. Every icon-only button has one; a labelled button only when the label
+    // alone does not say enough (a shortcut, a consequence).
+    in property <string> tooltip;
     callback clicked();
 
     property <bool> filled: root.variant == "primary" || root.variant == "danger";
@@ -21,18 +25,22 @@ export component AppButton inherits Rectangle {
     property <color> tone: root.variant == "danger" ? Theme.destructive : Theme.primary;
     property <color> content: !root.enabled ? Theme.muted-fg
         : root.filled ? Theme.on-primary
-        : root.variant == "ghost" ? Theme.muted-fg
+        : root.variant == "ghost" ? (touch.has-hover ? Theme.foreground : Theme.sidebar-fg)
         : Theme.foreground;
 
     height: root.compact ? Metrics.control-sm-h : Metrics.control-h;
     vertical-stretch: 0;
+    horizontal-stretch: 0;
     border-radius: Metrics.radius-sm;
     border-width: root.variant == "outline" ? 1px : 0px;
     border-color: Theme.border;
-    opacity: root.enabled ? 1.0 : 0.4;
+    opacity: root.enabled ? 1.0 : 0.6;
 
-    background: root.filled ? root.tone
-        : root.variant == "secondary" ? Theme.muted
+    // A disabled filled button drops its fill entirely: brand colour at low opacity with dark
+    // text on it is unreadable, and reads as "almost enabled".
+    background: root.filled && !root.enabled ? Theme.muted
+        : root.filled ? (touch.has-hover ? root.tone.brighter(0.08) : root.tone)
+        : root.variant == "secondary" ? (touch.has-hover && root.enabled ? Theme.accent : Theme.muted)
         : (touch.pressed && root.enabled) ? Theme.accent
         : (touch.has-hover && root.enabled) ? Theme.muted
         : Colors.transparent;
@@ -66,8 +74,17 @@ export component AppButton inherits Rectangle {
 
     touch := TouchArea {
         enabled: root.enabled;
+        changed has-hover => {
+            if (self.has-hover && root.tooltip != "") {
+                Tip.request(root.tooltip, root.absolute-position.x + root.width / 2,
+                    root.absolute-position.y + root.height + 4px);
+            } else {
+                Tip.dismiss();
+            }
+        }
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         clicked => {
+            Tip.dismiss();
             root.clicked();
         }
     }

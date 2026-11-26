@@ -1,0 +1,97 @@
+import { ProfileCard, CorrRow, VectorColumn, GridColumn, GridRow, ChartPoint } from "models.slint";
+
+// State of the Profile tab on the Data screen, set by the controller.
+export global ProfileStore {
+    in-out property <string> state;
+    in-out property <string> message;
+    in-out property <string> summary;
+    in-out property <int> sample;
+    // TABLESAMPLE works on tables only, not views.
+    in-out property <bool> can-sample: true;
+    in-out property <[ProfileCard]> cards;
+    in-out property <[string]> corr-names;
+    in-out property <[CorrRow]> corr-rows;
+    callback run(int);
+    callback open-sql();
+    callback copy-markdown();
+    callback export-csv();
+}
+
+// State of the Vectors tab on the Data screen, set by the controller.
+export global VectorStore {
+    // The open table has a vector column (the Data toolbar offers "Similar rows").
+    in-out property <bool> available;
+    callback similar();
+    in-out property <[VectorColumn]> columns;
+    in-out property <int> column;
+    in-out property <int> metric;
+    in-out property <string> k: "10";
+    in-out property <string> ef;
+    in-out property <string> query;
+    in-out property <[string]> text-columns;
+    in-out property <int> text-column: -1;
+    in-out property <string> text-query;
+    in-out property <bool> hybrid-ok;
+    in-out property <bool> has-selection;
+    in-out property <bool> busy;
+    in-out property <string> error;
+    in-out property <string> plan;
+    in-out property <string> plan-text;
+    in-out property <string> summary;
+    in-out property <[GridColumn]> result-columns;
+    in-out property <length> result-width;
+    in-out property <[GridRow]> result-rows;
+    callback pick-column(int);
+    callback pick-metric(int);
+    callback pick-text-column(int);
+    callback from-row();
+    callback search();
+    callback create-index(int, int);
+    callback open-sql();
+    callback copy-cells(int, int, int, int, bool);
+    // Narrowing: a WHERE condition and a largest distance.
+    in-out property <string> filter;
+    in-out property <string> max-distance;
+    // "Recall@10 9 / 10 (90 %)" after a recall check.
+    in-out property <string> recall;
+    callback check-recall();
+    // Index name and metric of an HNSW index to drop.
+    callback drop-index(int, int);
+    // Right pane: "search" or "map".
+    in-out property <string> view: "search";
+    // Embedding map: a 2D projection of a sample, coloured by a label column.
+    in-out property <string> map-state;
+    in-out property <string> map-note;
+    in-out property <[ChartPoint]> map-points;
+    in-out property <[string]> map-legend;
+    in-out property <[string]> label-columns;
+    in-out property <int> label-column: -1;
+    callback load-map();
+    callback pick-label(int);
+    callback map-pick(int);
+}
+
+// State of the Pivot tab under the editor, set by the controller.
+export global PivotStore {
+    in-out property <[string]> columns;
+    in-out property <int> rows: -1;
+    in-out property <int> cols: -1;
+    // -1: count rows.
+    in-out property <int> value: -1;
+    in-out property <string> agg: "sum";
+    in-out property <[GridColumn]> grid-columns;
+    in-out property <length> grid-width;
+    in-out property <[GridRow]> grid-rows;
+    in-out property <string> note;
+    callback opened();
+    callback set(string, int, string);
+    callback copy-cells(int, int, int, int, bool);
+    callback open-sql();
+}
+
+// Numbers for the cells selected in a grid, shown in the status bar.
+export global SelectionStore {
+    in-out property <string> summary;
+    callback query-block(int, int, int, int);
+    callback data-block(int, int, int, int);
+}

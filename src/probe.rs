@@ -2,7 +2,7 @@
 //!
 //! The UI only ever asks one question — "can this server be reached with these parameters?" —
 //! and knows nothing about the wire protocol. [`crate::driver`] answers it over
-//! `nusadb-libnusa`; [`UnavailableProbe`] stands in when that adapter cannot be built at all.
+//! the `nusadb` crate; [`UnavailableProbe`] stands in when that adapter cannot be built at all.
 //!
 //! The report is delivered through a callback rather than a return value because the adapter
 //! answers from a network task, not inline — which is also why it is `Send`.
@@ -41,6 +41,12 @@ pub trait ConnectionProbe {
     ///
     /// Implementations must call `report` exactly once, inline or later.
     fn probe(&self, params: &ConnectionParams, report: ProbeReport);
+}
+
+impl<T: ConnectionProbe + ?Sized> ConnectionProbe for std::rc::Rc<T> {
+    fn probe(&self, params: &ConnectionParams, report: ProbeReport) {
+        (**self).probe(params, report);
+    }
 }
 
 /// The stand-in used when no real probe could be started.

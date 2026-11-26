@@ -12,7 +12,7 @@ pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// Default port of the Nusa Wire Protocol listener.
 pub const DEFAULT_PORT: u16 = 5678;
 /// Default bootstrap user.
-pub const DEFAULT_USER: &str = "nusa-root";
+pub const DEFAULT_USER: &str = "nusadb-root";
 /// Default database opened on connect.
 pub const DEFAULT_DATABASE: &str = "nusadb";
 
@@ -147,6 +147,10 @@ pub struct ValidServer {
     pub environment: Environment,
     /// Connection parameters.
     pub params: ConnectionParams,
+    /// The server's Prometheus endpoint (`--metrics-listen`), or empty.
+    pub metrics: String,
+    /// Keep the password in the system keychain.
+    pub remember: bool,
 }
 
 /// A server the user saved, as held by the store.
@@ -162,6 +166,12 @@ pub struct ServerProfile {
     pub status: ConnectionStatus,
     /// Connection parameters.
     pub params: ConnectionParams,
+    /// When a session to it last opened, in Unix seconds.
+    pub last_used: Option<u64>,
+    /// The server's Prometheus endpoint (`--metrics-listen`), or empty.
+    pub metrics: String,
+    /// The password is remembered in the system keychain.
+    pub remember: bool,
 }
 
 impl ServerProfile {
@@ -174,21 +184,10 @@ impl ServerProfile {
             environment: valid.environment,
             status: ConnectionStatus::default(),
             params: valid.params,
+            last_used: None,
+            metrics: valid.metrics,
+            remember: valid.remember,
         }
-    }
-
-    /// Whether this profile should stay visible under the navigator's search box.
-    ///
-    /// Matching spans name, host, and database so a user who remembers any one of the three
-    /// finds the server; the needle is expected to be lowercase already.
-    #[must_use]
-    pub fn matches(&self, needle: &str) -> bool {
-        if needle.is_empty() {
-            return true;
-        }
-        self.name.to_lowercase().contains(needle)
-            || self.params.host.to_lowercase().contains(needle)
-            || self.params.database.to_lowercase().contains(needle)
     }
 }
 
@@ -207,6 +206,8 @@ pub enum ValidationError {
     DatabaseEmpty,
     /// TLS was requested without naming a CA bundle to verify the server against.
     TlsWithoutCa,
+    /// The metrics address was not `host:port` or an `http://` URL.
+    MetricsInvalid,
 }
 
 impl fmt::Display for ValidationError {
@@ -218,6 +219,9 @@ impl fmt::Display for ValidationError {
             Self::UserEmpty => "User cannot be empty.",
             Self::DatabaseEmpty => "Database cannot be empty.",
             Self::TlsWithoutCa => "TLS needs a CA certificate file to verify the server.",
+            Self::MetricsInvalid => {
+                "Metrics address must be host:port or an http:// URL (the --metrics-listen address)."
+            },
         };
         f.write_str(message)
     }
@@ -249,6 +253,10 @@ pub struct ServerDraft {
     pub ca_path: String,
     /// Environment tag.
     pub environment: Environment,
+    /// Metrics address, as typed.
+    pub metrics: String,
+    /// Remember the password in the system keychain.
+    pub remember: bool,
 }
 
 impl Default for ServerDraft {
@@ -265,6 +273,8 @@ impl Default for ServerDraft {
             tls: false,
             ca_path: String::new(),
             environment: Environment::default(),
+            metrics: String::new(),
+            remember: false,
         }
     }
 }
@@ -283,6 +293,8 @@ impl ServerDraft {
             tls: profile.params.tls,
             ca_path: profile.params.ca_path.clone(),
             environment: profile.environment,
+            metrics: profile.metrics.clone(),
+            remember: profile.remember,
         }
     }
 
@@ -325,9 +337,14 @@ impl ServerDraft {
             return Err(ValidationError::TlsWithoutCa);
         }
 
+        let metrics = crate::metrics::normalize_url(&self.metrics)
+            .map_err(|()| ValidationError::MetricsInvalid)?;
+
         Ok(ValidServer {
             name: name.to_owned(),
             environment: self.environment,
+            metrics,
+            remember: self.remember,
             params: ConnectionParams {
                 host: host.to_owned(),
                 port,
@@ -431,16 +448,6 @@ mod tests {
 
         let profile = ServerProfile::from_valid(7, draft.validate().unwrap());
         assert_eq!(ServerDraft::from_profile(&profile), draft);
-    }
-
-    #[test]
-    fn search_spans_name_host_and_database() {
-        let profile = ServerProfile::from_valid(1, named("prod-jakarta").validate().unwrap());
-        assert!(profile.matches(""));
-        assert!(profile.matches("jakarta"));
-        assert!(profile.matches("127.0"));
-        assert!(profile.matches("nusadb"));
-        assert!(!profile.matches("frankfurt"));
     }
 
     #[test]

@@ -1,0 +1,339 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { ImportColumn, DetailRow } from "../models.slint";
+import { AppButton } from "../components/app_button.slint";
+import { Checkbox } from "../components/checkbox.slint";
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    callback picked();
+
+    height: 22px;
+    width: chip-text.preferred-width + 18px;
+    border-radius: 11px;
+    border-width: 1px;
+    border-color: root.on ? Theme.primary : touch.has-hover ? Theme.muted-fg : Theme.border;
+    background: root.on ? Theme.primary.with-alpha(0.16) : Colors.transparent;
+
+    chip-text := Text {
+        text: root.label;
+        color: root.on ? Theme.accent-fg : Theme.sidebar-fg;
+        font-size: Metrics.text-xs;
+        font-family: Metrics.font-mono;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.picked();
+        }
+    }
+}
+
+// Load a CSV / TSV / JSON file into a table: how the file is read, which of its columns go
+// where, the first rows as they will be loaded, then one COPY.
+export component ImportDialog inherits Rectangle {
+    in property <string> table;
+    in property <string> file;
+    in property <string> summary;
+    in property <bool> json;
+    in property <string> delimiter;
+    in property <bool> header;
+    in property <bool> empty-null;
+    in property <[ImportColumn]> columns;
+    in property <[string]> preview-headers;
+    in property <[DetailRow]> preview;
+    in property <string> defaults-note;
+    in property <string> problem;
+    in property <bool> busy;
+    in property <int> row-count;
+    callback set-delimiter(string);
+    callback set-header(bool);
+    callback set-empty-null(bool);
+    callback toggle-column(int, bool);
+    callback cancel();
+    callback import();
+
+    background: #00000088;
+
+    TouchArea { }
+
+    Rectangle {
+        width: min(860px, root.width - 48px);
+        height: min(620px, root.height - 48px);
+        border-radius: Metrics.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.popover;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000066;
+
+        VerticalLayout {
+            padding: Metrics.s4;
+            spacing: Metrics.s3;
+
+            VerticalLayout {
+                spacing: 2px;
+
+                Text {
+                    text: "Import into " + root.table;
+                    color: Theme.foreground;
+                    font-size: Metrics.text-md;
+                    font-weight: 600;
+                }
+
+                Text {
+                    text: root.file + " · " + root.summary;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    overflow: elide;
+                }
+            }
+
+            if !root.json: HorizontalLayout {
+                spacing: Metrics.s2;
+                height: 24px;
+                alignment: start;
+
+                Text {
+                    text: "DELIMITER";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                for d in [",", ";", "tab", "|"]: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Chip {
+                        label: d;
+                        on: root.delimiter == d;
+                        picked => {
+                            root.set-delimiter(d);
+                        }
+                    }
+                }
+
+                Rectangle { width: Metrics.s3; horizontal-stretch: 0; }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Checkbox {
+                        checked: root.header;
+                        toggled(on) => {
+                            root.set-header(on);
+                        }
+                    }
+                }
+
+                Text {
+                    text: "First row is the header";
+                    color: Theme.foreground;
+                    font-size: Metrics.text-sm;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Rectangle { width: Metrics.s3; horizontal-stretch: 0; }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Checkbox {
+                        checked: root.empty-null;
+                        toggled(on) => {
+                            root.set-empty-null(on);
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Empty field is NULL";
+                    color: Theme.foreground;
+                    font-size: Metrics.text-sm;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+            }
+
+            // ── Column mapping ───────────────────────────────────────────────
+            Text {
+                text: "COLUMNS: file → table";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                font-weight: 600;
+            }
+
+            ScrollView {
+                min-height: 64px;
+                max-height: 150px;
+
+                VerticalLayout {
+                    alignment: start;
+
+                    for c[i] in root.columns: HorizontalLayout {
+                        height: 26px;
+                        spacing: Metrics.s2;
+                        alignment: start;
+
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 0;
+
+                            Checkbox {
+                                checked: c.on && c.target != "";
+                                enabled: c.target != "";
+                                toggled(on) => {
+                                    root.toggle-column(i, on);
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: c.file;
+                            width: 220px;
+                            color: Theme.foreground;
+                            font-size: Metrics.text-sm;
+                            font-family: Metrics.font-mono;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: "→";
+                            color: Theme.muted-fg;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+
+                        Text {
+                            horizontal-alignment: left;
+                            text: c.target == "" ? "no such column, skipped" : c.on ? c.target : c.target + " (skipped)";
+                            color: c.target == "" || !c.on ? Theme.gutter-fg : Theme.accent-fg;
+                            font-size: Metrics.text-sm;
+                            font-family: c.target == "" ? Metrics.font-ui : Metrics.font-mono;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            if root.defaults-note != "": Text {
+                text: root.defaults-note;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                wrap: word-wrap;
+            }
+
+            // ── Preview ──────────────────────────────────────────────────────
+            Text {
+                text: "FIRST ROWS AS THEY WILL LOAD";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                font-weight: 600;
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: Metrics.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border;
+                clip: true;
+
+                ScrollView {
+                    VerticalLayout {
+                        alignment: start;
+
+                        Rectangle {
+                            height: 24px;
+                            background: Theme.card;
+
+                            HorizontalLayout {
+                                padding-left: Metrics.s2;
+                                spacing: Metrics.s3;
+                                alignment: start;
+
+                                for h in root.preview-headers: Text {
+                                    width: 130px;
+                                    text: h;
+                                    color: Theme.muted-fg;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                    font-family: Metrics.font-mono;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+
+                        for r[i] in root.preview: Rectangle {
+                            height: 24px;
+                            background: Math.mod(i, 2) == 1 ? Theme.zebra : Colors.transparent;
+
+                            HorizontalLayout {
+                                padding-left: Metrics.s2;
+                                spacing: Metrics.s3;
+                                alignment: start;
+
+                                for v in r.cells: Text {
+                                    width: 130px;
+                                    text: v;
+                                    color: v == "NULL" ? Theme.gutter-fg : Theme.foreground;
+                                    font-size: Metrics.text-xs;
+                                    font-family: Metrics.font-mono;
+                                    font-italic: v == "NULL";
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Metrics.s2;
+                height: 30px;
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.problem;
+                    color: Theme.destructive;
+                    font-size: Metrics.text-xs;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+
+                AppButton {
+                    horizontal-stretch: 0;
+                    label: "Cancel";
+                    variant: "ghost";
+                    size: "sm";
+                    enabled: !root.busy;
+                    clicked => {
+                        root.cancel();
+                    }
+                }
+
+                AppButton {
+                    horizontal-stretch: 0;
+                    label: root.busy ? "Importing…" : "Import " + root.row-count + (root.row-count == 1 ? " row" : " rows");
+                    tooltip: "One COPY: every row loads, or none does";
+                    variant: "primary";
+                    size: "sm";
+                    enabled: !root.busy && root.problem == "" && root.row-count > 0;
+                    clicked => {
+                        root.import();
+                    }
+                }
+            }
+        }
+    }
+}

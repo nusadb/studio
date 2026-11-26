@@ -1,0 +1,365 @@
+import { Theme, Metrics } from "../theme.slint";
+import { SqlLayer, CompletionRow } from "../models.slint";
+import { Icon } from "icon.slint";
+import { Keys } from "../keys.slint";
+
+// The SQL editor: an editable buffer with syntax colours and line numbers.
+//
+// Slint's `TextInput` draws its text in one colour, so the colours are drawn underneath it
+// instead: the coloured runs (from `src/sql_highlight.rs`) are laid out in the same font and
+// size at the same origin, and the input on top paints its glyphs fully transparent. What the
+// user sees is the coloured copy; what they click, select and type into is the real input.
+//
+// The input's caret takes the first stop of its brush, which is why the brush is a gradient
+// that starts at the foreground colour and is transparent everywhere it actually paints.
+//
+// Line heights are never hard-coded: each colour layer is one multi-line `Text` in the editor
+// font, laid out by the same text engine as the input, so the layers sit exactly on the input's
+// lines at any size. A renderer that cannot paint a gradient on text shows the input's own
+// glyphs instead — plain, but still exactly aligned.
+export component SqlEditor inherits Rectangle {
+    in property <[SqlLayer]> layers;
+    // "1\n2\n3…", one number per line of the buffer.
+    in property <string> line-numbers;
+    in-out property <string> text;
+    // The new text and the caret's UTF-8 offset in it.
+    callback edited(string, int);
+    // Ctrl+Enter / F5.
+    callback run();
+    // Ctrl+T.
+    callback new-tab();
+    callback open-file();
+    callback save-file();
+    callback close-tab();
+    // ⌘↩ / Ctrl+Enter: the selection, or the statement at the caret.
+    callback run-current();
+    // Where the caret and the other end of the selection are, in bytes.
+    out property <int> cursor: input.cursor-position-byte-offset;
+    // The caret moved (typing, arrows, a click): the owner keeps it in view.
+    callback caret-moved(int);
+    changed cursor => {
+        root.caret-moved(self.cursor);
+    }
+    out property <int> anchor: input.anchor-position-byte-offset;
+    callback save-file-as();
+
+    // ── Completion ───────────────────────────────────────────────────────────
+    // `cursor-position-byte-offset` is the only caret position Slint exposes on a TextInput.
+    in property <[CompletionRow]> completions;
+    in-out property <int> completion-index;
+    // Where the word being completed starts, in lines/characters, for placing the popup.
+    in property <int> completion-line;
+    in property <int> completion-col;
+    callback complete-request(string, int);
+    callback complete-accept(int);
+    callback complete-cancel();
+    // Moving the caret from outside: set the offset, then bump the serial.
+    in property <int> caret-target;
+    in property <int> caret-serial;
+    // With caret-target, a selection to set (a find match); -1 for a plain caret.
+    in property <int> select-end: -1;
+    // Find (Ctrl+F), find-and-replace (Ctrl+H), format (Ctrl+Shift+F).
+    callback find(bool);
+    callback format();
+
+    // Scroll so (line, column) is in view: set both, then bump the serial.
+    in property <int> reveal-line;
+    in property <int> reveal-col;
+    in property <int> reveal-serial;
+
+    changed reveal-serial => {
+        // The code is monospace, so a position is columns × one glyph's advance.
+        let x = root.pad + root.reveal-col * probe.preferred-width;
+        let y = root.pad + root.reveal-line * probe.preferred-height;
+        if (x < -flick.viewport-x || x > -flick.viewport-x + flick.width - 48px) {
+            flick.viewport-x = max(flick.width - flick.viewport-width, min(0px, -(x - flick.width / 3)));
+        }
+        if (y < -flick.viewport-y || y > -flick.viewport-y + flick.height - 2 * probe.preferred-height) {
+            flick.viewport-y = max(flick.height - flick.viewport-height, min(0px, -(y - flick.height / 3)));
+        }
+    }
+
+    // One glyph of the code font, measured, for reveal-*.
+    probe := Text {
+        visible: false;
+        text: "M";
+        font-size: Metrics.text-code;
+        font-family: Metrics.font-mono;
+    }
+
+    changed caret-serial => {
+        input.set-selection-offsets(root.caret-target, root.select-end >= 0 ? root.select-end : root.caret-target);
+        // A find match is shown without taking the keyboard from the find box.
+        if (root.select-end < 0) {
+            input.focus();
+        }
+    }
+
+    property <bool> popup: root.completions.length > 0 && input.has-focus;
+
+    property <length> pad: Metrics.s3;
+
+    background: Theme.background;
+    min-height: 72px;
+    clip: true;
+
+    public function focus-editor() {
+        input.focus();
+    }
+
+    keys := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+
+        capture-key-pressed(event) => {
+            if (root.popup) {
+                if (event.text == Key.DownArrow) {
+                    root.completion-index = Math.mod(root.completion-index + 1, root.completions.length);
+                    return accept;
+                }
+                if (event.text == Key.UpArrow) {
+                    root.completion-index = Math.mod(root.completion-index - 1 + root.completions.length, root.completions.length);
+                    return accept;
+                }
+                if (event.text == Key.Return || event.text == Key.Tab) {
+                    root.complete-accept(root.completion-index);
+                    return accept;
+                }
+                if (event.text == Key.Escape) {
+                    root.complete-cancel();
+                    return accept;
+                }
+            }
+            let m = event.modifiers;
+            if (Keys.completion(event.text, m.control, m.meta)) {
+                root.complete-request(input.text, input.cursor-position-byte-offset);
+                return accept;
+            }
+            // F5 and ⇧⌘↩ / Ctrl+Shift+Enter run everything; ⌘↩ / Ctrl+Enter the current part.
+            if (event.text == Key.F5 || (event.text == Key.Return && Keys.primary(m.control, m.meta) && m.shift)) {
+                root.run();
+                return accept;
+            }
+            if (event.text == Key.Return && Keys.primary(m.control, m.meta)) {
+                root.run-current();
+                return accept;
+            }
+            // Replace comes before find: on a Mac it is ⌥⌘F, which also matches ⌘F.
+            if (Keys.replace(event.text, m.control, m.alt, m.meta)) {
+                root.find(true);
+                return accept;
+            }
+            if (!Keys.primary(m.control, m.meta) || m.alt) {
+                return reject;
+            }
+            if (Keys.is(event.text, "t")) {
+                root.new-tab();
+                return accept;
+            }
+            if (Keys.is(event.text, "w")) {
+                root.close-tab();
+                return accept;
+            }
+            if (Keys.is(event.text, "f")) {
+                if (m.shift) {
+                    root.format();
+                } else {
+                    root.find(false);
+                }
+                return accept;
+            }
+            if (Keys.is(event.text, "o")) {
+                root.open-file();
+                return accept;
+            }
+            if (Keys.is(event.text, "s")) {
+                if (m.shift) {
+                    root.save-file-as();
+                } else {
+                    root.save-file();
+                }
+                return accept;
+            }
+            return reject;
+        }
+
+        HorizontalLayout {
+            // ── Line-number gutter ───────────────────────────────────────────────
+            gutter := Rectangle {
+                min-width: 44px;
+                max-width: 44px;
+                background: Theme.card;
+                clip: true;
+
+                Rectangle {
+                    x: parent.width - 1px;
+                    y: 0;
+                    width: 1px;
+                    height: parent.height;
+                    background: Theme.border;
+                }
+
+                Text {
+                    x: 0;
+                    y: flick.viewport-y + root.pad;
+                    width: gutter.width - 10px;
+                    height: self.preferred-height;
+                    text: root.line-numbers;
+                    color: Theme.gutter-fg;
+                    font-size: Metrics.text-code;
+                    font-family: Metrics.font-mono;
+                    horizontal-alignment: right;
+                    vertical-alignment: top;
+                }
+            }
+
+            flick := Flickable {
+                viewport-width: max(self.width, input.preferred-width + 2 * root.pad + 24px);
+                viewport-height: max(self.height, input.preferred-height + 2 * root.pad);
+
+                // Clicking empty space below or beside the code still lands in the editor.
+                TouchArea {
+                    width: flick.viewport-width;
+                    height: flick.viewport-height;
+                    mouse-cursor: MouseCursor.text;
+                    clicked => {
+                        input.focus();
+                    }
+                }
+
+                for layer in root.layers: Text {
+                    x: root.pad;
+                    y: root.pad;
+                    width: self.preferred-width;
+                    height: self.preferred-height;
+                    text: layer.text;
+                    wrap: no-wrap;
+                    vertical-alignment: top;
+                    color: layer.kind == "keyword" ? Theme.sql-keyword
+                        : layer.kind == "string" ? Theme.sql-string
+                        : layer.kind == "comment" ? Theme.sql-comment
+                        : layer.kind == "number" ? Theme.sql-number
+                        : layer.kind == "cast" ? Theme.sql-cast
+                        : layer.kind == "punct" ? Theme.sql-punct
+                        : Theme.sql-ident;
+                    font-size: Metrics.text-code;
+                    font-family: Metrics.font-mono;
+                    font-italic: layer.kind == "comment";
+                }
+
+                input := TextInput {
+                    x: root.pad;
+                    y: root.pad;
+                    width: max(flick.viewport-width - 2 * root.pad, self.preferred-width);
+                    height: max(flick.viewport-height - 2 * root.pad, self.preferred-height);
+                    text <=> root.text;
+                    single-line: false;
+                    wrap: no-wrap;
+                    font-size: Metrics.text-code;
+                    font-family: Metrics.font-mono;
+                    color: @linear-gradient(90deg, Theme.foreground 0%, transparent 0%, transparent 100%);
+                    selection-background-color: Theme.primary.with-alpha(0.35);
+                    selection-foreground-color: Theme.foreground;
+                    text-cursor-width: 2px;
+                    edited => {
+                        root.edited(self.text, self.cursor-position-byte-offset);
+                    }
+                }
+
+                // One character cell of the editor font, measured rather than assumed.
+                cell := Text {
+                    x: -1000px;
+                    text: "M";
+                    font-size: Metrics.text-code;
+                    font-family: Metrics.font-mono;
+                    visible: false;
+                }
+
+                if root.popup: Rectangle {
+                    x: root.pad + root.completion-col * cell.preferred-width - 26px;
+                    y: root.pad + (root.completion-line + 1) * cell.preferred-height + 2px;
+                    width: 300px;
+                    height: min(8, root.completions.length) * 24px + 8px;
+                    border-radius: Metrics.radius;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    background: Theme.popover;
+                    drop-shadow-blur: 12px;
+                    drop-shadow-color: #00000055;
+                    clip: true;
+
+                    for item[i] in root.completions: Rectangle {
+                        x: 4px;
+                        y: 4px + i * 24px;
+                        width: parent.width - 8px;
+                        height: 24px;
+                        border-radius: Metrics.radius-sm;
+                        background: i == root.completion-index ? Theme.primary.with-alpha(0.2)
+                            : item-touch.has-hover ? Theme.muted : Colors.transparent;
+
+                        item-touch := TouchArea {
+                            clicked => {
+                                root.complete-accept(i);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 8px;
+                            spacing: 6px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 0;
+
+                                if item.kind != "keyword": Icon {
+                                    name: item.kind == "column" ? "columns" : item.kind;
+                                    tint: item.kind == "table" ? Theme.ent-table
+                                        : item.kind == "view" ? Theme.ent-view
+                                        : Theme.info;
+                                    size: 12px;
+                                }
+
+                                if item.kind == "keyword": Text {
+                                    text: "K";
+                                    width: 12px;
+                                    color: Theme.sql-keyword;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: item.label;
+                                color: Theme.foreground;
+                                font-size: Metrics.text-sm;
+                                font-family: Metrics.font-mono;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: item.detail;
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-xs;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                                horizontal-stretch: 0;
+                            }
+                        }
+                    }
+                }
+
+                if root.text == "": Text {
+                    x: root.pad;
+                    y: root.pad;
+                    text: "Write SQL here. " + Keys.run + " runs the statement at the cursor, " + Keys.run-all + " the whole script.";
+                    color: Theme.gutter-fg;
+                    font-size: Metrics.text-code;
+                    font-family: Metrics.font-mono;
+                }
+            }
+        }
+    }
+}

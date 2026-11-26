@@ -18,6 +18,8 @@ export struct ServerRow {
     // "connected" | "connecting" | "error" | "disconnected".
     status: string,
     tls: bool,
+    // "Last connected 5 min ago" / "Never connected".
+    last-used: string,
 }
 
 // One visible line of the object tree.
@@ -26,11 +28,11 @@ export struct ServerRow {
 // keeps rendering a single `for` loop and makes scrolling, selection, and keyboard traversal
 // ordinary list operations instead of recursive ones.
 export struct TreeRow {
-    // Unique across the whole tree, e.g. "srv:3" or "srv:3/databases".
+    // Unique across the whole tree.
     id: string,
     label: string,
-    // "server" | "database" | "schema" | "group" | "table" | "view" | "index" | "sequence" |
-    // "function" | "policy" | "network" | "hint" — picks the icon and its colour.
+    // "server" | "database" | "schema" | "group" | "table" | "view" | "hint" | "error" —
+    // picks the icon and its colour.
     kind: string,
     // Indent level; 0 is a server.
     depth: int,
@@ -38,7 +40,7 @@ export struct TreeRow {
     expanded: bool,
     // Connection status, for server rows only.
     status: string,
-    // Small trailing annotation, e.g. an index method.
+    // Small trailing annotation, e.g. how many tables a group holds.
     badge: string,
     // Read-only / system objects render at reduced opacity.
     dimmed: bool,
@@ -50,6 +52,17 @@ export struct Property {
     value: string,
     // Renders the value in the monospace face — used for endpoints, types, and DDL.
     mono: bool,
+    // A smaller second line: a column's key/null/default flags, a constraint's target.
+    note: string,
+}
+
+// A titled list in the inspector: Columns, Constraints, Indexes, Triggers…
+export struct InspectorSection {
+    heading: string,
+    items: [Property],
+    // Name-first lists (columns, indexes) emphasise the label; detail lists the value.
+    emphasise: bool,
+    label-w: length,
 }
 
 // One coloured run inside a line of SQL, classified by `src/sql_highlight.rs`.
@@ -65,9 +78,343 @@ export struct SqlLine {
     tokens: [SqlToken],
 }
 
+// The editor's colours as stacked layers: one per token kind, each the whole buffer with every
+// character of another kind blanked to a space. Drawn as multi-line text in a monospaced face,
+// every layer has exactly the input's line metrics, so the colours cannot drift off the text.
+export struct SqlLayer {
+    kind: string,
+    text: string,
+}
+
 // A result-grid column header.
 export struct GridColumn {
     name: string,
     // SQL type name shown beside the column name, e.g. "int" / "timestamptz".
     kind: string,
+    // Sized in Rust from the widest value, so the grid never needs to measure itself.
+    width: length,
+    // Numbers read best right-aligned.
+    numeric: bool,
+    // "asc" | "desc" | "" — the grid's current ordering by this column.
+    sort: string,
+    // Distance from the first column's left edge, for scrolling a cell into view.
+    offset: length,
+}
+
+// One cell of a result grid. `null` distinguishes SQL NULL from the text "NULL".
+export struct GridCell {
+    text: string,
+    null: bool,
+    // Staged edit state: "" | "edited" | "deleted" | "new" | "default".
+    state: string,
+    // The value has line breaks: it is shown on one line and edited in the panel.
+    long: bool,
+}
+
+export struct GridRow {
+    cells: [GridCell],
+}
+
+// One line of the Messages tab: what a statement did, or why it failed.
+export struct MessageRow {
+    ok: bool,
+    // "INSERT 2" or the error text.
+    title: string,
+    // The statement, shortened to its first line.
+    detail: string,
+    // "3 ms"
+    time: string,
+}
+
+// One past run in the History tab.
+// One result set of a script run: a tab under the editor when the script returned several.
+export struct ResultPart {
+    label: string,
+    sql: string,
+    rows: string,
+}
+
+export struct HistoryRow {
+    // The script's first line of code.
+    title: string,
+    // "local / nusadb · 3 min ago · 54 rows"
+    meta: string,
+    ok: bool,
+}
+
+// One operator of an EXPLAIN plan, indented under its parent.
+export struct PlanRow {
+    depth: int,
+    // "IndexScan"
+    op: string,
+    // "customers using customers_pkey"
+    detail: string,
+    // A heading line naming the statement the plan belongs to.
+    heading: bool,
+}
+
+// One tab of the Query screen.
+export struct QueryTabRow {
+    id: int,
+    title: string,
+    // "server / database" it runs against.
+    target: string,
+    active: bool,
+    running: bool,
+    // Finished in the background and not looked at yet.
+    unseen: bool,
+    // Has a file and changes not saved to it.
+    dirty: bool,
+}
+
+// One autocomplete suggestion.
+export struct CompletionRow {
+    label: string,
+    // "keyword" | "table" | "view" | "column"
+    kind: string,
+    detail: string,
+}
+
+// One column in the table designer.
+export struct DesignColumn {
+    name: string,
+    type: string,
+    nullable: bool,
+    default: string,
+    primary: bool,
+    // "" (as loaded) | "new" | "changed"
+    state: string,
+}
+
+// One index in the table designer.
+export struct DesignIndex {
+    name: string,
+    columns: string,
+    unique: bool,
+    predicate: string,
+    // "" | "new" | "changed"
+    state: string,
+}
+
+// ── Security ──────────────────────────────────────────────────────────────────
+
+// A role in the Security list. `state`: "" | "new" | "changed" | "dropped".
+export struct SecRole {
+    name: string,
+    detail: string,
+    state: string,
+    // PUBLIC: every role, not a role of its own.
+    pseudo: bool,
+}
+
+// A role the selected role belongs to.
+export struct SecMember {
+    role: string,
+    admin: bool,
+    // "" | "new" | "changed"
+    state: string,
+}
+
+// One table's row in the privilege matrix: per privilege 0 none, 1 granted, 2 with grant option.
+export struct SecGrantRow {
+    relation: string,
+    view: bool,
+    cells: [int],
+    changed: [bool],
+}
+
+// A table in the row-level security list.
+export struct SecTable {
+    label: string,
+    rls: bool,
+    changed: bool,
+    policies: int,
+}
+
+// A policy on the selected table. `state`: "" | "new" | "changed".
+export struct SecPolicy {
+    name: string,
+    command: string,
+    roles: string,
+    using: string,
+    check: string,
+    permissive: bool,
+    state: string,
+}
+
+// ── Monitor ───────────────────────────────────────────────────────────────────
+
+// One figure on the Monitor screen, with its recent history as an SVG path.
+export struct MonTile {
+    label: string,
+    value: string,
+    unit: string,
+    sub: string,
+    // Sparkline path in a 200 × 36 box; empty until there are two points.
+    path: string,
+    alert: bool,
+}
+
+// A database the server has opened since it started.
+export struct MonDb {
+    name: string,
+    stopped: bool,
+}
+
+// A prepared (two-phase) transaction waiting for COMMIT / ROLLBACK PREPARED.
+export struct MonXact {
+    gid: string,
+    prepared: string,
+    owner: string,
+    database: string,
+}
+
+// ── Object page ───────────────────────────────────────────────────────────────
+
+// A tab of the object page.
+export struct DetailTab {
+    id: string,
+    label: string,
+}
+
+export struct DetailRow {
+    cells: [string],
+}
+
+// One tab's content: a table (headers, widths in px, rows) or, when `code` is set, source text.
+export struct DetailSection {
+    id: string,
+    headers: [string],
+    widths: [int],
+    rows: [DetailRow],
+    empty: string,
+    code: string,
+    note: string,
+    // Narrowest the table may get before it scrolls sideways, in px.
+    min-width: int,
+}
+
+// ── ER diagram ────────────────────────────────────────────────────────────────
+
+export struct ErdColumn {
+    name: string,
+    type: string,
+    // "PK", "FK", "PK FK" or ""
+    key: string,
+    required: bool,
+}
+
+// A table's box, positioned in diagram units (scaled by the view's zoom).
+export struct ErdBox {
+    x: float,
+    y: float,
+    h: float,
+    title: string,
+    columns: [ErdColumn],
+    more: string,
+    selected: bool,
+    // Linked to the selected table by a foreign key.
+    related: bool,
+    // Something is selected and this box is not part of it.
+    dim: bool,
+    // Matches the search.
+    hit: bool,
+}
+
+// A notification heard by the database's listener.
+export struct NotifyRow {
+    time: string,
+    channel: string,
+    payload: string,
+    pid: string,
+}
+
+// One column of a file being imported, and where it goes.
+export struct ImportColumn {
+    file: string,
+    // Table column it loads into, or "" when the table has none by that name.
+    target: string,
+    on: bool,
+}
+
+// ── Chart tab ────────────────────────────────────────────────────────────────
+// Positions are fractions of the plot: x from the left, h / y from the bottom.
+export struct ChartBar {
+    x0: float,
+    x1: float,
+    y0: float,
+    h: float,
+    series: int,
+    label: string,
+    value: string,
+}
+
+export struct ChartPoint {
+    x: float,
+    y: float,
+    label: string,
+    series: int,
+}
+
+// A pie slice: an SVG path on a 200 × 200 box.
+export struct ChartSlice {
+    path: string,
+    label: string,
+    value: string,
+    series: int,
+}
+
+export struct ChartTick {
+    at: float,
+    label: string,
+}
+
+// ── Profile tab ──────────────────────────────────────────────────────────────
+export struct ProfileBar {
+    label: string,
+    value: string,
+    // 0..1 of the longest bar.
+    share: float,
+}
+
+export struct ProfileCard {
+    name: string,
+    kind: string,
+    // "number" | "text" | "time" | "bool" | "vector" | "other"
+    family: string,
+    // e.g. "12 % NULL"
+    nulls: string,
+    nulls-share: float,
+    stats: [Property],
+    top: [ProfileBar],
+    histogram: [ProfileBar],
+    hist-from: string,
+    hist-to: string,
+}
+
+export struct CorrCell {
+    text: string,
+    // -1..1; `valid` false for no value.
+    value: float,
+    valid: bool,
+}
+
+export struct CorrRow {
+    name: string,
+    cells: [CorrCell],
+}
+
+// ── Vectors tab ──────────────────────────────────────────────────────────────
+export struct VectorColumn {
+    name: string,
+    // "768" or "?" before the first row is read.
+    dims: string,
+    rows: string,
+    norm: string,
+    // Norm range, normalised and zero vectors, e.g. "norm 0.91 – 1 · 3 of 6 unit length".
+    detail: string,
+    // HNSW index per metric (cosine, L2, inner product, L1), e.g. "items_emb · cosine"; "" if none.
+    indexes: [string],
+    // Which metrics (cosine, L2, inner product, L1) have an index, in that order.
+    indexed: [bool],
 }

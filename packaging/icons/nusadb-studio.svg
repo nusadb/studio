@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- The in-app brand mark (a database cylinder) on the dark surface, in the NusaDB navy and indigo. -->
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="#0F1433"/>
+  <rect x="24.5" y="24.5" width="463" height="463" rx="103.5" fill="none" stroke="#1E2557" stroke-width="1"/>
+  <g fill="none" stroke="#8E9BFF" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="256" cy="150" rx="124" ry="44"/>
+    <path d="M132 150 V362 C132 386 187 406 256 406 C325 406 380 386 380 362 V150"/>
+    <path d="M132 256 C132 280 187 300 256 300 C325 300 380 280 380 256"/>
+  </g>
+  <ellipse cx="256" cy="150" rx="111" ry="31" fill="#8E9BFF" fill-opacity="0.18"/>
+</svg>

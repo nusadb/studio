@@ -1,0 +1,294 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { NotifyRow } from "../models.slint";
+import { AppButton } from "../components/app_button.slint";
+
+component Field inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    callback accepted();
+
+    height: 26px;
+    border-radius: Metrics.radius-sm;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.primary : Theme.border;
+    background: Theme.input-bg;
+
+    input := TextInput {
+        x: 7px;
+        width: parent.width - 14px;
+        height: parent.height;
+        vertical-alignment: center;
+        single-line: true;
+        text <=> root.text;
+        font-size: Metrics.text-sm;
+        font-family: Metrics.font-mono;
+        color: Theme.foreground;
+        accepted => {
+            root.accepted();
+        }
+    }
+
+    if root.text == "": Text {
+        x: 7px;
+        height: parent.height;
+        vertical-alignment: center;
+        text: root.placeholder;
+        color: Theme.gutter-fg;
+        font-size: Metrics.text-sm;
+    }
+}
+
+// LISTEN / NOTIFY for the editor's database. The listener has a connection of its own, so the
+// editor's session (and any transaction open in it) is not touched.
+export component NotificationsPanel inherits Rectangle {
+    in property <[NotifyRow]> rows;
+    in property <[string]> channels;
+    in property <string> status;
+    in property <bool> failed;
+    in property <bool> has-target;
+    callback listen(string);
+    callback unlisten(string);
+    callback notify(string, string);
+    callback clear();
+
+    property <string> new-channel;
+    property <string> send-channel;
+    property <string> send-payload;
+
+    VerticalLayout {
+        padding: Metrics.s2;
+        spacing: Metrics.s2;
+
+        HorizontalLayout {
+            spacing: Metrics.s2;
+            height: 26px;
+
+            Text {
+                text: "LISTEN";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+                min-width: 54px;
+                horizontal-stretch: 0;
+            }
+
+            Field {
+                width: 180px;
+                horizontal-stretch: 0;
+                text <=> root.new-channel;
+                placeholder: "channel";
+                accepted => {
+                    root.listen(root.new-channel);
+                    root.new-channel = "";
+                }
+            }
+
+            AppButton {
+                horizontal-stretch: 0;
+                label: "Listen";
+                variant: "outline";
+                size: "sm";
+                enabled: root.has-target && root.new-channel != "";
+                clicked => {
+                    root.listen(root.new-channel);
+                    root.new-channel = "";
+                }
+            }
+
+            for c in root.channels: Rectangle {
+                horizontal-stretch: 0;
+                height: 22px;
+                y: 2px;
+                width: chip.preferred-width + 30px;
+                border-radius: 11px;
+                background: Theme.primary.with-alpha(0.16);
+
+                chip := Text {
+                    x: 10px;
+                    text: c;
+                    color: Theme.accent-fg;
+                    font-size: Metrics.text-xs;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    height: parent.height;
+                }
+
+                Text {
+                    x: parent.width - 16px;
+                    text: "×";
+                    color: x-touch.has-hover ? Theme.foreground : Theme.accent-fg;
+                    font-size: Metrics.text-sm;
+                    vertical-alignment: center;
+                    height: parent.height;
+                }
+
+                x-touch := TouchArea {
+                    x: parent.width - 20px;
+                    width: 20px;
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => {
+                        root.unlisten(c);
+                    }
+                }
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.status;
+                color: root.failed ? Theme.destructive : Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Metrics.s2;
+            height: 26px;
+
+            Text {
+                text: "NOTIFY";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+                min-width: 54px;
+                horizontal-stretch: 0;
+            }
+
+            Field {
+                width: 180px;
+                horizontal-stretch: 0;
+                text <=> root.send-channel;
+                placeholder: "channel";
+            }
+
+            Field {
+                horizontal-stretch: 1;
+                text <=> root.send-payload;
+                placeholder: "payload (optional)";
+                accepted => {
+                    root.notify(root.send-channel, root.send-payload);
+                }
+            }
+
+            AppButton {
+                horizontal-stretch: 0;
+                label: "Send";
+                variant: "outline";
+                size: "sm";
+                enabled: root.has-target && root.send-channel != "";
+                clicked => {
+                    root.notify(root.send-channel, root.send-payload);
+                }
+            }
+
+            AppButton {
+                horizontal-stretch: 0;
+                label: "Clear";
+                variant: "ghost";
+                size: "sm";
+                enabled: root.rows.length > 0;
+                clicked => {
+                    root.clear();
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: Metrics.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+
+            VerticalLayout {
+                Rectangle {
+                    height: 24px;
+                    background: Theme.card;
+
+                    HorizontalLayout {
+                        padding-left: Metrics.s2;
+                        spacing: Metrics.s3;
+
+                        for h in [{ t: "TIME (UTC)", w: 80 }, { t: "CHANNEL", w: 160 }, { t: "FROM PID", w: 70 }, { t: "PAYLOAD", w: 0 }]: Text {
+                            text: h.t;
+                            width: h.w > 0 ? h.w * 1px : self.preferred-width;
+                            horizontal-stretch: h.w > 0 ? 0 : 1;
+                            color: Theme.muted-fg;
+                            font-size: 10px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if root.rows.length == 0: Text {
+                    vertical-stretch: 1;
+                    text: root.channels.length == 0
+                        ? "LISTEN to a channel to see what NOTIFY sends to it. A notification sent inside a transaction arrives at COMMIT."
+                        : "Waiting for notifications on " + root.channels.length + (root.channels.length == 1 ? " channel…" : " channels…");
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+
+                if root.rows.length > 0: ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        alignment: start;
+
+                        for r[i] in root.rows: Rectangle {
+                            background: Math.mod(i, 2) == 1 ? Theme.zebra : Colors.transparent;
+
+                            HorizontalLayout {
+                                padding-left: Metrics.s2;
+                                padding-top: 4px;
+                                padding-bottom: 4px;
+                                spacing: Metrics.s3;
+
+                                Text {
+                                    width: 80px;
+                                    text: r.time;
+                                    color: Theme.muted-fg;
+                                    font-size: Metrics.text-xs;
+                                    font-family: Metrics.font-mono;
+                                }
+
+                                Text {
+                                    width: 160px;
+                                    text: r.channel;
+                                    color: Theme.accent-fg;
+                                    font-size: Metrics.text-sm;
+                                    font-family: Metrics.font-mono;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    width: 70px;
+                                    text: r.pid;
+                                    color: Theme.muted-fg;
+                                    font-size: Metrics.text-xs;
+                                    font-family: Metrics.font-mono;
+                                }
+
+                                Text {
+                                    text: r.payload == "" ? "(no payload)" : r.payload;
+                                    color: r.payload == "" ? Theme.gutter-fg : Theme.foreground;
+                                    font-size: Metrics.text-sm;
+                                    font-family: Metrics.font-mono;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

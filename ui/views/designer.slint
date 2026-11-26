@@ -1,0 +1,809 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { DesignColumn, DesignIndex } from "../models.slint";
+import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
+import { Checkbox } from "../components/checkbox.slint";
+
+// Widths of the column grid, shared by its header and its rows.
+global Cols {
+    out property <length> grip: 28px;
+    out property <length> name: 180px;
+    out property <length> type: 160px;
+    out property <length> flag: 64px;
+    out property <length> remove: 36px;
+}
+
+// A borderless input that looks like a grid cell until it has focus.
+export component CellInput inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> mono: true;
+    // Take the keyboard as soon as the field appears (a column just added).
+    in property <bool> autofocus;
+    callback edited(string);
+    init => {
+        if (root.autofocus) {
+            input.focus();
+        }
+    }
+    changed autofocus => {
+        if (self.autofocus) {
+            input.focus();
+        }
+    }
+    callback focused();
+
+    height: 26px;
+    border-radius: Metrics.radius-sm;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.primary : touch.has-hover ? Theme.border : Colors.transparent;
+    background: input.has-focus ? Theme.input-bg : Colors.transparent;
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => {
+            input.focus();
+        }
+    }
+
+    input := TextInput {
+        x: 6px;
+        width: parent.width - 12px;
+        height: parent.height;
+        vertical-alignment: center;
+        text <=> root.text;
+        single-line: true;
+        font-size: Metrics.text-sm;
+        font-family: root.mono ? Metrics.font-mono : Metrics.font-ui;
+        color: Theme.foreground;
+        selection-background-color: Theme.primary.with-alpha(0.35);
+        selection-foreground-color: Theme.foreground;
+        edited => {
+            root.edited(self.text);
+        }
+        changed has-focus => {
+            if (self.has-focus) {
+                root.focused();
+            }
+        }
+    }
+
+    if root.text == "": Text {
+        x: 6px;
+        width: parent.width - 12px;
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+        text: root.placeholder;
+        color: Theme.gutter-fg;
+        font-size: Metrics.text-sm;
+        font-family: root.mono ? Metrics.font-mono : Metrics.font-ui;
+    }
+}
+
+export component Heading inherits Text {
+    color: Theme.muted-fg;
+    font-size: Metrics.text-xs;
+    font-weight: 600;
+    vertical-alignment: center;
+}
+
+// Create a table, or change an existing one, with the SQL it will run in view the whole time.
+export component Designer inherits Rectangle {
+    // "" (nothing open) | "new" | "edit"
+    in property <string> mode;
+    in property <string> original-name;
+    in property <string> target-label;
+    in-out property <string> schema;
+    in-out property <string> table-name;
+    in property <[DesignColumn]> columns;
+    in-out property <int> selected: -1;
+    in property <string> ddl;
+    in property <string> problem;
+    in property <bool> has-changes;
+    in property <bool> applying;
+    in property <bool> has-target;
+    in property <[DesignIndex]> indexes;
+    // "columns" | "indexes"
+    in-out property <string> tab: "columns";
+    callback index-edited(int, string, string);
+    callback index-unique(int, bool);
+    callback add-index();
+    callback remove-index(int);
+
+    callback new-table();
+    // The table selected in the navigator, offered for editing ("" when none is).
+    in property <string> suggest-table;
+    callback edit-suggested();
+    callback renamed(string, string);
+    callback field-edited(int, string, string);
+    callback flag-toggled(int, string, bool);
+    callback add-column();
+    // Row whose name field takes focus when it appears: the column just added.
+    property <int> focus-row: -1;
+    property <int> focus-index: -1;
+    callback remove-column(int);
+    callback set-type(string);
+    callback apply();
+    callback reset();
+
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    if root.mode == "": VerticalLayout {
+        alignment: center;
+        spacing: Metrics.s3;
+        padding: Metrics.s5;
+
+        Text {
+            text: "Design a table";
+            color: Theme.foreground;
+            font-size: Metrics.text-md;
+            font-weight: 500;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: !root.has-target ? "Choose a database in the navigator first."
+                : root.suggest-table != "" ? "Edit the selected table, or start a new one."
+                : "Start a new table, or select one in the navigator to edit it.";
+            color: Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: Metrics.s2;
+
+            if root.suggest-table != "": AppButton {
+                label: "Edit " + root.suggest-table;
+                variant: "primary";
+                size: "sm";
+                clicked => {
+                    root.edit-suggested();
+                }
+            }
+
+            AppButton {
+                label: "New table";
+                icon: "plus";
+                variant: root.suggest-table != "" ? "outline" : "primary";
+                size: "sm";
+                enabled: root.has-target;
+                clicked => {
+                    root.new-table();
+                }
+            }
+        }
+    }
+
+    if root.mode != "": VerticalLayout {
+        // ── Header ───────────────────────────────────────────────────────────
+        Rectangle {
+            min-height: Metrics.toolbar-h + 4px;
+            max-height: Metrics.toolbar-h + 4px;
+            background: Theme.card;
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s2;
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Icon {
+                        name: "columns";
+                        tint: Theme.ent-table;
+                        size: 14px;
+                    }
+                }
+
+                Text {
+                    text: root.mode == "new" ? "New table" : "Structure of " + root.original-name;
+                    color: Theme.foreground;
+                    font-size: Metrics.text-md;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Text {
+                    text: root.target-label;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "New table";
+                        icon: "plus";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: !root.applying;
+                        clicked => {
+                            root.new-table();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: root.mode == "new" ? "Clear" : "Revert";
+                        tooltip: root.mode == "new" ? "Start the form over" : "Throw away the changes made here";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.has-changes && !root.applying;
+                        clicked => {
+                            root.reset();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: root.applying ? "Applying…" : root.mode == "new" ? "Create table" : "Apply changes";
+                        tooltip: "Runs the SQL below in one transaction";
+                        variant: "primary";
+                        size: "sm";
+                        enabled: root.has-changes && root.problem == "" && !root.applying;
+                        clicked => {
+                            root.apply();
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Name ─────────────────────────────────────────────────────────────
+        HorizontalLayout {
+            padding-left: Metrics.s3;
+            padding-right: Metrics.s3;
+            padding-top: Metrics.s2;
+            padding-bottom: Metrics.s2;
+            spacing: Metrics.s2;
+            min-height: 44px;
+            max-height: 44px;
+
+            // NusaDB folds unquoted names to lower case; the designer does the same.
+
+            Heading {
+                text: "Schema";
+                horizontal-stretch: 0;
+            }
+
+            Rectangle {
+                width: 140px;
+                border-radius: Metrics.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                CellInput {
+                    width: parent.width;
+                    y: (parent.height - self.height) / 2;
+                    text <=> root.schema;
+                    edited(text) => {
+                        root.renamed(text, root.table-name);
+                    }
+                }
+            }
+
+            Heading {
+                text: "Table";
+                horizontal-stretch: 0;
+            }
+
+            Rectangle {
+                width: 260px;
+                border-radius: Metrics.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                CellInput {
+                    width: parent.width;
+                    y: (parent.height - self.height) / 2;
+                    text <=> root.table-name;
+                    placeholder: "e.g. invoices";
+                    autofocus: root.mode == "new" && root.table-name == "";
+                    edited(text) => {
+                        root.renamed(root.schema, text);
+                    }
+                }
+            }
+
+            Rectangle { }
+        }
+
+        // ── Tabs ─────────────────────────────────────────────────────────────
+        HorizontalLayout {
+            min-height: 30px;
+            max-height: 30px;
+            padding-left: Metrics.s2;
+            alignment: start;
+
+            for t[i] in [{ id: "columns", label: "Columns", n: root.columns.length }, { id: "indexes", label: "Indexes", n: root.indexes.length }]: Rectangle {
+                width: tab-text.preferred-width + 24px;
+
+                tab-text := Text {
+                    text: t.label + "  " + t.n;
+                    color: root.tab == t.id ? Theme.foreground : Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    font-weight: root.tab == t.id ? 600 : 400;
+                }
+
+                Rectangle {
+                    y: parent.height - 2px;
+                    height: 2px;
+                    background: root.tab == t.id ? Theme.primary : Colors.transparent;
+                }
+
+                TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => {
+                        root.tab = t.id;
+                    }
+                }
+            }
+        }
+
+        // ── Column grid header ───────────────────────────────────────────────
+        if root.tab == "columns": Rectangle {
+            min-height: 26px;
+            max-height: 26px;
+            background: Theme.card;
+
+            Rectangle {
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s1;
+
+                Rectangle { width: Cols.grip; }
+                Heading { text: "COLUMN"; width: Cols.name; }
+                Heading { text: "TYPE"; width: Cols.type; }
+                Heading { text: "NOT NULL"; width: Cols.flag; horizontal-alignment: center; }
+                Heading { text: "KEY"; width: Cols.flag; horizontal-alignment: center; }
+                Heading { text: "DEFAULT (SQL expression)"; }
+                Rectangle { width: Cols.remove; }
+            }
+        }
+
+        // ── Columns ──────────────────────────────────────────────────────────
+        if root.tab == "columns": grid := ScrollView {
+            vertical-stretch: 1;
+            min-height: 80px;
+            viewport-height: root.columns.length * 32px + 44px;
+
+            for column[i] in root.columns: Rectangle {
+                x: 0;
+                y: i * 32px;
+                width: grid.visible-width;
+                height: 32px;
+                background: i == root.selected ? Theme.primary.with-alpha(0.08)
+                    : column.state == "new" ? Theme.success.with-alpha(0.08)
+                    : column.state == "changed" ? Theme.warning.with-alpha(0.10)
+                    : Colors.transparent;
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    width: parent.width;
+                    height: 1px;
+                    background: Theme.border.with-alpha(0.5);
+                }
+
+                HorizontalLayout {
+                    padding-left: Metrics.s1;
+                    padding-top: 3px;
+                    padding-bottom: 3px;
+
+                    Rectangle {
+                        width: Cols.grip;
+
+                        Text {
+                            text: i + 1;
+                            color: Theme.gutter-fg;
+                            font-size: Metrics.text-xs;
+                            font-family: Metrics.font-mono;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: parent.width;
+                            height: parent.height;
+                        }
+                    }
+
+                    CellInput {
+                        width: Cols.name - 6px;
+                        text: column.name;
+                        placeholder: "name";
+                        autofocus: i == root.focus-row;
+                        focused => {
+                            root.selected = i;
+                            root.focus-row = -1;
+                        }
+                        edited(text) => {
+                            root.field-edited(i, "name", text);
+                        }
+                    }
+
+                    Rectangle { width: 6px; }
+
+                    CellInput {
+                        width: Cols.type - 6px;
+                        text: column.type;
+                        placeholder: "type";
+                        focused => {
+                            root.selected = i;
+                        }
+                        edited(text) => {
+                            root.field-edited(i, "type", text);
+                        }
+                    }
+
+                    Rectangle { width: 6px; }
+
+                    Rectangle {
+                        width: Cols.flag;
+
+                        Checkbox {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            // A key column is NOT NULL by definition.
+                            checked: !column.nullable || column.primary;
+                            enabled: !column.primary;
+                            toggled(on) => {
+                                root.selected = i;
+                                root.flag-toggled(i, "not-null", on);
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: Cols.flag;
+
+                        Checkbox {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            checked: column.primary;
+                            toggled(on) => {
+                                root.selected = i;
+                                root.flag-toggled(i, "primary", on);
+                            }
+                        }
+                    }
+
+                    CellInput {
+                        text: column.default;
+                        placeholder: "none";
+                        focused => {
+                            root.selected = i;
+                        }
+                        edited(text) => {
+                            root.field-edited(i, "default", text);
+                        }
+                    }
+
+                    Rectangle {
+                        width: Cols.remove;
+
+                        AppButton {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            icon: "close";
+                            tooltip: column.state == "new" ? "Remove this column" : "Drop this column (its data goes with it)";
+                            variant: "ghost";
+                            size: "sm";
+                            clicked => {
+                                root.remove-column(i);
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                x: Metrics.s1 + Cols.grip;
+                y: root.columns.length * 32px + 8px;
+                width: self.preferred-width;
+                spacing: Metrics.s2;
+
+                AppButton {
+                    label: "Add column";
+                    icon: "plus";
+                    variant: "outline";
+                    size: "sm";
+                    clicked => {
+                        root.focus-row = root.columns.length;
+                        root.add-column();
+                    }
+                }
+            }
+        }
+
+        // ── Indexes ──────────────────────────────────────────────────────────
+        if root.tab == "indexes": Rectangle {
+            min-height: 26px;
+            max-height: 26px;
+            background: Theme.card;
+
+            Rectangle {
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s1;
+
+                Rectangle { width: Cols.grip; }
+                Heading { text: "INDEX"; width: Cols.name; }
+                Heading { text: "COLUMNS"; width: 260px; }
+                Heading { text: "UNIQUE"; width: Cols.flag; horizontal-alignment: center; }
+                Heading { text: "ONLY ROWS WHERE (partial)"; }
+                Rectangle { width: Cols.remove; }
+            }
+        }
+
+        if root.tab == "indexes": ixgrid := ScrollView {
+            vertical-stretch: 1;
+            min-height: 80px;
+            viewport-height: root.indexes.length * 32px + 72px;
+
+            for index[i] in root.indexes: Rectangle {
+                x: 0;
+                y: i * 32px;
+                width: ixgrid.visible-width;
+                height: 32px;
+                background: index.state == "new" ? Theme.success.with-alpha(0.08)
+                    : index.state == "changed" ? Theme.warning.with-alpha(0.10)
+                    : Colors.transparent;
+
+                Rectangle {
+                    y: parent.height - 1px;
+                    width: parent.width;
+                    height: 1px;
+                    background: Theme.border.with-alpha(0.5);
+                }
+
+                HorizontalLayout {
+                    padding-left: Metrics.s1;
+                    padding-top: 3px;
+                    padding-bottom: 3px;
+
+                    Rectangle { width: Cols.grip; }
+
+                    CellInput {
+                        width: Cols.name - 6px;
+                        text: index.name;
+                        placeholder: "name";
+                        edited(text) => {
+                            root.index-edited(i, "name", text);
+                        }
+                    }
+
+                    Rectangle { width: 6px; }
+
+                    CellInput {
+                        width: 254px;
+                        text: index.columns;
+                        placeholder: "total DESC  ·  emb vector_cosine_ops";
+                        autofocus: i == root.focus-index;
+                        focused => {
+                            root.focus-index = -1;
+                        }
+                        edited(text) => {
+                            root.index-edited(i, "columns", text);
+                        }
+                    }
+
+                    Rectangle { width: 6px; }
+
+                    Rectangle {
+                        width: Cols.flag;
+
+                        Checkbox {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            checked: index.unique;
+                            toggled(on) => {
+                                root.index-unique(i, on);
+                            }
+                        }
+                    }
+
+                    CellInput {
+                        text: index.predicate;
+                        // A loaded index's predicate is not in NusaDB's catalog, so an empty
+                        // field there means "unknown", not "every row".
+                        placeholder: index.state == "new" ? "all rows" : "not in catalog";
+                        edited(text) => {
+                            root.index-edited(i, "predicate", text);
+                        }
+                    }
+
+                    Rectangle {
+                        width: Cols.remove;
+
+                        AppButton {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            icon: "close";
+                            tooltip: "Drop this index";
+                            variant: "ghost";
+                            size: "sm";
+                            clicked => {
+                                root.remove-index(i);
+                            }
+                        }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                x: Metrics.s1 + Cols.grip;
+                y: root.indexes.length * 32px + 8px;
+                width: ixgrid.visible-width - 2 * Metrics.s3;
+                spacing: Metrics.s2;
+
+                HorizontalLayout {
+                    alignment: start;
+
+                    AppButton {
+                        label: "Add index";
+                        icon: "plus";
+                        variant: "outline";
+                        size: "sm";
+                        clicked => {
+                            root.focus-index = root.indexes.length;
+                            root.add-index();
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Indexes created by PRIMARY KEY, UNIQUE and foreign keys belong to their constraint and are not listed.";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // ── Type shortcuts ───────────────────────────────────────────────────
+        if root.tab == "columns": Rectangle {
+            min-height: 34px;
+            max-height: 34px;
+            background: Theme.card;
+
+            Rectangle {
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: 4px;
+
+                Heading {
+                    text: root.selected >= 0 ? "TYPE OF #" + (root.selected + 1) : "TYPE";
+                    horizontal-stretch: 0;
+                }
+
+                Rectangle { width: 4px; }
+
+                for type in ["int", "bigint", "serial", "text", "varchar(255)", "numeric(12,2)", "bool", "date", "timestamptz", "uuid", "json", "vector(768)"]: VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: type;
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.selected >= 0;
+                        clicked => {
+                            root.set-type(type);
+                        }
+                    }
+                }
+
+                Rectangle { }
+            }
+        }
+
+        // ── SQL preview ──────────────────────────────────────────────────────
+        Rectangle {
+            vertical-stretch: 0;
+            min-height: 150px;
+            max-height: 220px;
+            background: Theme.background;
+
+            Rectangle {
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            VerticalLayout {
+                padding: Metrics.s3;
+                spacing: Metrics.s1;
+
+                HorizontalLayout {
+                    spacing: Metrics.s2;
+                    height: 18px;
+
+                    Heading {
+                        text: "SQL THAT WILL RUN";
+                        horizontal-stretch: 0;
+                    }
+
+                    if root.problem != "": Text {
+                        text: root.problem;
+                        color: Theme.destructive;
+                        font-size: Metrics.text-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                preview := Flickable {
+                    viewport-height: max(self.height, sql.preferred-height);
+                    viewport-width: max(self.width, sql.preferred-width);
+
+                    sql := TextInput {
+                        text: root.ddl == "" ? "-- No changes yet." : root.ddl;
+                        read-only: true;
+                        single-line: false;
+                        wrap: no-wrap;
+                        color: root.ddl == "" ? Theme.gutter-fg : Theme.sql-ident;
+                        font-size: Metrics.text-sm;
+                        font-family: Metrics.font-mono;
+                        selection-background-color: Theme.primary.with-alpha(0.35);
+                        selection-foreground-color: Theme.foreground;
+                    }
+                }
+            }
+        }
+    }
+}

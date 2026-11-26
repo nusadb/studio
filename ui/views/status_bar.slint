@@ -1,3 +1,4 @@
+import { SelectionStore } from "../stores.slint";
 import { Theme, Metrics } from "../theme.slint";
 import { Icon } from "../components/icon.slint";
 import { StatusDot } from "../components/status_dot.slint";
@@ -8,14 +9,14 @@ component Sep inherits VerticalLayout {
     horizontal-stretch: 0;
 
     Text {
-        text: "|";
-        color: Theme.border;
+        text: "·";
+        color: Theme.gutter-fg;
         font-size: Metrics.text-sm;
     }
 }
 
-// Bottom strip: the context of whatever is focused, per the design brief —
-// "prod-jakarta · nusadb · public · Idle · v0.1.0".
+// Bottom strip: the context of whatever is focused — server, database, last result.
+// A segment with nothing to say is left out rather than shown as a dash.
 export component StatusBar inherits Rectangle {
     in property <string> status: "disconnected";
     in property <string> server;
@@ -23,6 +24,7 @@ export component StatusBar inherits Rectangle {
     in property <string> rows;
     in property <string> timing;
     in property <string> version;
+    in property <string> txn: "idle";
 
     min-height: Metrics.statusbar-h;
     max-height: Metrics.statusbar-h;
@@ -64,20 +66,20 @@ export component StatusBar inherits Rectangle {
             }
         }
 
-        Sep { }
+        if root.database != "": Sep { }
 
-        VerticalLayout {
+        if root.database != "": VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
 
             Icon {
                 name: "database";
                 tint: Theme.muted-fg;
-                size: 9px;
+                size: 10px;
             }
         }
 
-        VerticalLayout {
+        if root.database != "": VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
 
@@ -88,9 +90,9 @@ export component StatusBar inherits Rectangle {
             }
         }
 
-        Sep { }
+        if root.rows != "": Sep { }
 
-        VerticalLayout {
+        if root.rows != "": VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
 
@@ -101,20 +103,20 @@ export component StatusBar inherits Rectangle {
             }
         }
 
-        Sep { }
+        if root.timing != "": Sep { }
 
-        VerticalLayout {
+        if root.timing != "": VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
 
             Icon {
                 name: "clock";
                 tint: Theme.muted-fg;
-                size: 9px;
+                size: 10px;
             }
         }
 
-        VerticalLayout {
+        if root.timing != "": VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
 
@@ -126,6 +128,31 @@ export component StatusBar inherits Rectangle {
         }
 
         Rectangle { }
+
+        if root.txn != "idle": VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Text {
+                text: root.txn == "failed" ? "Transaction failed" : "Transaction open";
+                color: root.txn == "failed" ? Theme.destructive : Theme.warning;
+                font-size: Metrics.text-xs;
+                font-weight: 600;
+            }
+        }
+
+        // Count, sum, average… of the cells selected in a grid.
+        if SelectionStore.summary != "": VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Text {
+                text: SelectionStore.summary;
+                color: Theme.foreground;
+                font-size: Metrics.text-xs;
+                font-family: Metrics.font-mono;
+            }
+        }
 
         VerticalLayout {
             alignment: center;

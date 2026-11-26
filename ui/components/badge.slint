@@ -11,9 +11,7 @@ export component Badge inherits Rectangle {
     height: 17px;
     horizontal-stretch: 0;
     border-radius: Metrics.radius-sm;
-    border-width: 1px;
-    border-color: root.tone.with-alpha(0.35);
-    background: root.tone.with-alpha(0.13);
+    background: root.tone.with-alpha(0.14);
 
     HorizontalLayout {
         padding-left: 5px;
@@ -22,8 +20,9 @@ export component Badge inherits Rectangle {
         Text {
             text: root.label;
             color: root.tone;
-            font-size: Metrics.text-xs;
+            font-size: 10px;
             font-weight: 600;
+            letter-spacing: 0.3px;
             vertical-alignment: center;
         }
     }

@@ -1,0 +1,73 @@
+# GitHub Actions: build and package NusaDB Studio for Linux, macOS and Windows.
+# Copy to .github/workflows/ to enable it.
+# Runs on a `studio-v*` tag and attaches the packages to that tag's release; run it by hand
+# (workflow_dispatch) to get the packages as build artifacts only.
+name: studio-release
+
+on:
+  push:
+    tags: ["studio-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  package:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04      # oldest glibc we ship against
+            script: sh packaging/linux/build-packages.sh
+          - os: macos-14
+            script: sh packaging/macos/build-dmg.sh
+          - os: windows-2022
+            script: powershell -ExecutionPolicy Bypass -File packaging/windows/build-installer.ps1
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev
+      - if: runner.os == 'Windows'
+        run: choco install nsis --no-progress -y
+      # Signing needs the Developer ID certificate imported into a keychain first (e.g.
+      # apple-actions/import-codesign-certs); without these secrets the app is ad-hoc signed.
+      - name: Build packages
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+        run: ${{ matrix.script }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nusadb-studio-${{ runner.os }}
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/*.dmg
+            dist/*.zip
+            dist/*-setup.exe
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/*.dmg
+            dist/*.zip
+            dist/*-setup.exe

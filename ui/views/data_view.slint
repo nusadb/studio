@@ -1,0 +1,775 @@
+import { Select } from "../components/select.slint";
+import { ProfileView } from "profile_view.slint";
+import { VectorView } from "vector_view.slint";
+import { ProfileStore, VectorStore, SelectionStore } from "../stores.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { GridColumn, GridRow, DetailTab, DetailSection } from "../models.slint";
+import { ObjectDetail } from "object_detail.slint";
+import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
+import { ResultGrid } from "../components/result_grid.slint";
+import { CellViewer } from "../components/cell_viewer.slint";
+import { Keys } from "../keys.slint";
+
+// Browse one table or view: a page of rows at a time, narrowed by a WHERE clause the user
+// types, with the total count so paging knows where it is.
+export component DataView inherits Rectangle {
+    // "public.customers", or empty when nothing is open.
+    in property <string> object-label;
+    // "table" | "view"
+    in property <string> object-kind: "table";
+    in property <string> target-label;
+    in property <[GridColumn]> columns;
+    in property <length> columns-width;
+    in property <[GridRow]> rows;
+    in property <int> first-row: 1;
+    // "1–200 of 1,204" style summary, rendered in Rust.
+    in property <string> range-label;
+    in property <bool> can-prev;
+    in property <bool> can-next;
+    in property <bool> loading;
+    in property <string> error;
+    in-out property <string> filter;
+    in-out property <int> selected-row: -1;
+    in-out property <int> selected-col: -1;
+    in property <bool> cell-open;
+    in property <string> cell-column;
+    in property <string> cell-kind;
+    in property <string> cell-value;
+    in property <bool> cell-null;
+    callback sort(int);
+    callback cell(int, int);
+    callback close-cell();
+
+    // ── Editing ──────────────────────────────────────────────────────────────
+    in property <bool> editable;
+    // Why the grid is read-only, when it is.
+    in property <string> read-only-reason;
+    // Rows with staged changes.
+    in property <int> pending;
+    in property <bool> saving;
+    in property <bool> cell-new-row;
+    in property <bool> cell-staged;
+    in-out property <string> cell-draft;
+    callback add-row();
+    callback copy-row();
+    callback export();
+    callback delete-row(int, int);
+    // Bumped after + Row: the grid takes the keyboard so typing fills the new row.
+    property <int> grid-focus-request;
+    // Rows of the grid's selected block, for Delete row.
+    property <int> block-r1: -1;
+    property <int> block-r2: -1;
+    callback discard();
+    callback save();
+    callback column-resized(int, length);
+    callback column-fit(int);
+    callback grid-action(string, int, int, int, int);
+    callback paste-text(int, int, string);
+    pure callback col-at(length) -> int;
+    in property <bool> has-hidden;
+    in-out property <int> anchor-row: -1;
+    in-out property <int> anchor-col: -1;
+    callback cell-apply(string);
+    callback cell-commit(int, int, string);
+    callback cell-set-null();
+    callback cell-default();
+    callback cell-revert();
+
+    callback apply-filter(string);
+    // Percent of rows sampled; 0 = all.
+    in property <int> sample;
+    callback pick-sample(int);
+    callback prev-page();
+    callback next-page();
+    callback reload();
+    callback open-in-query();
+    callback import();
+
+    // ── Object page ──────────────────────────────────────────────────────────
+    // "data" shows the rows; any other id shows that tab of the object's details.
+    in property <[DetailTab]> tabs;
+    in property <string> tab: "data";
+    in property <DetailSection> section;
+    callback pick-tab(string);
+    callback copy-code(string);
+    callback open-code(string);
+
+    background: Theme.background;
+    min-width: 0px;
+    min-height: 0px;
+    clip: true;
+
+    if root.object-label == "": VerticalLayout {
+        alignment: center;
+        spacing: Metrics.s2;
+        padding: Metrics.s5;
+
+        Text {
+            text: "No table open";
+            color: Theme.foreground;
+            font-size: Metrics.text-md;
+            font-weight: 500;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Double-click a table or view in the navigator to browse its rows here.";
+            color: Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+
+    if root.object-label != "": VerticalLayout {
+        // ── Title + actions ──────────────────────────────────────────────────
+        Rectangle {
+            min-height: Metrics.toolbar-h + 4px;
+            max-height: Metrics.toolbar-h + 4px;
+            background: Theme.card;
+            clip: true;
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s2;
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Icon {
+                        name: root.object-kind;
+                        tint: root.object-kind == "view" || root.object-kind == "matview" || root.object-kind == "function" ? Theme.ent-view
+                            : root.object-kind == "sequence" ? Theme.ent-sequence : Theme.ent-table;
+                        size: 14px;
+                    }
+                }
+
+                Text {
+                    text: root.object-label;
+                    color: Theme.foreground;
+                    font-size: Metrics.text-md;
+                    font-weight: 600;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+
+                Text {
+                    text: root.target-label;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+
+                if root.tab == "data" && root.editable: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Row";
+                        icon: "plus";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: !root.loading && !root.saving;
+                        clicked => {
+                            root.add-row();
+                            root.grid-focus-request += 1;
+                        }
+                    }
+                }
+
+                if root.tab == "data" && root.editable: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Delete row";
+                        icon: "minus";
+                        tooltip: "Mark the selected rows for deletion (again to undo)";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.selected-row >= 0 && !root.loading && !root.saving;
+                        clicked => {
+                            root.delete-row(root.block-r1, root.block-r2);
+                        }
+                    }
+                }
+
+                if root.tab == "data" && !root.editable && root.read-only-reason != "": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Text {
+                        text: root.read-only-reason;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-xs;
+                    }
+                }
+
+                if root.tab == "data": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        icon: "copy";
+                        tooltip: "Copy the selected row (tab-separated)";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.selected-row >= 0;
+                        clicked => {
+                            root.copy-row();
+                        }
+                    }
+                }
+
+                if root.tab == "data" && VectorStore.available: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Similar rows";
+                        icon: "search";
+                        tooltip: "Nearest neighbours of the selected row's vector";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.selected-row >= 0 && !root.loading;
+                        clicked => {
+                            VectorStore.similar();
+                        }
+                    }
+                }
+
+                if root.tab == "data" && root.object-kind == "table": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Import…";
+                        tooltip: "Load rows from a CSV, TSV or JSON file";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: !root.loading && !root.saving;
+                        clicked => {
+                            root.import();
+                        }
+                    }
+                }
+
+                if root.tab == "data": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        icon: "download";
+                        tooltip: "Export every matching row to CSV or JSON…";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: !root.loading;
+                        clicked => {
+                            root.export();
+                        }
+                    }
+                }
+
+                if root.tab == "data": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Open in Query";
+                        icon: "open";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.open-in-query();
+                        }
+                    }
+                }
+
+                if root.tab == "data": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        icon: "refresh";
+                        label: "Reload";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: !root.loading;
+                        clicked => {
+                            root.reload();
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Object tabs ──────────────────────────────────────────────────────
+        HorizontalLayout {
+            min-height: 32px;
+            max-height: 32px;
+            padding-left: Metrics.s2;
+            alignment: start;
+
+            for t in root.tabs: Rectangle {
+                width: tab-text.preferred-width + 24px;
+
+                tab-text := Text {
+                    text: t.label;
+                    color: root.tab == t.id ? Theme.foreground : Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    font-weight: root.tab == t.id ? 600 : 400;
+                }
+
+                Rectangle {
+                    y: parent.height - 2px;
+                    height: 2px;
+                    background: root.tab == t.id ? Theme.primary : Colors.transparent;
+                }
+
+                TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => {
+                        root.pick-tab(t.id);
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+
+        if root.tab == "profile": ProfileView {
+            vertical-stretch: 1;
+            state: ProfileStore.state;
+            message: ProfileStore.message;
+            summary: ProfileStore.summary;
+            sample: ProfileStore.sample;
+            can-sample: ProfileStore.can-sample;
+            cards: ProfileStore.cards;
+            corr-names: ProfileStore.corr-names;
+            corr-rows: ProfileStore.corr-rows;
+            run(p) => {
+                ProfileStore.run(p);
+            }
+            open-sql => {
+                ProfileStore.open-sql();
+            }
+            copy-markdown => {
+                ProfileStore.copy-markdown();
+            }
+            export-csv => {
+                ProfileStore.export-csv();
+            }
+        }
+
+        if root.tab == "vectors": VectorView {
+            vertical-stretch: 1;
+            columns: VectorStore.columns;
+            column: VectorStore.column;
+            metric: VectorStore.metric;
+            k <=> VectorStore.k;
+            ef <=> VectorStore.ef;
+            query <=> VectorStore.query;
+            text-columns: VectorStore.text-columns;
+            text-column: VectorStore.text-column;
+            text-query <=> VectorStore.text-query;
+            hybrid-ok: VectorStore.hybrid-ok;
+            has-selection: VectorStore.has-selection;
+            busy: VectorStore.busy;
+            error: VectorStore.error;
+            plan: VectorStore.plan;
+            plan-text: VectorStore.plan-text;
+            summary: VectorStore.summary;
+            result-columns: VectorStore.result-columns;
+            result-width: VectorStore.result-width;
+            result-rows: VectorStore.result-rows;
+            pick-column(i) => {
+                VectorStore.pick-column(i);
+            }
+            pick-metric(i) => {
+                VectorStore.pick-metric(i);
+            }
+            pick-text-column(i) => {
+                VectorStore.pick-text-column(i);
+            }
+            from-row => {
+                VectorStore.from-row();
+            }
+            search => {
+                VectorStore.search();
+            }
+            create-index(c, m) => {
+                VectorStore.create-index(c, m);
+            }
+            open-sql => {
+                VectorStore.open-sql();
+            }
+            copy-cells(r1, c1, r2, c2, h) => {
+                VectorStore.copy-cells(r1, c1, r2, c2, h);
+            }
+        }
+
+        if root.tab != "data" && root.tab != "profile" && root.tab != "vectors": ObjectDetail {
+            vertical-stretch: 1;
+            section: root.section;
+            copy-code(code) => {
+                root.copy-code(code);
+            }
+            open-code(code) => {
+                root.open-code(code);
+            }
+        }
+
+        if root.tab == "data": VerticalLayout {
+        // ── Filter + paging ──────────────────────────────────────────────────
+        Rectangle {
+            min-height: 38px;
+            max-height: 38px;
+            background: Theme.background;
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s2;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                spacing: Metrics.s2;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: Metrics.radius;
+                    border-width: 1px;
+                    border-color: where.has-focus ? Theme.primary : Theme.border;
+                    background: Theme.input-bg;
+
+                    HorizontalLayout {
+                        padding-left: Metrics.s2;
+                        padding-right: Metrics.s2;
+                        spacing: 6px;
+
+                        Text {
+                            text: "WHERE";
+                            color: Theme.sql-keyword;
+                            font-size: Metrics.text-sm;
+                            font-family: Metrics.font-mono;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+
+                            where := TextInput {
+                                text <=> root.filter;
+                                single-line: true;
+                                font-size: Metrics.text-sm;
+                                font-family: Metrics.font-mono;
+                                color: Theme.foreground;
+                                selection-background-color: Theme.primary.with-alpha(0.35);
+                                selection-foreground-color: Theme.foreground;
+                                accepted => {
+                                    root.apply-filter(self.text);
+                                }
+                            }
+                        }
+
+                        // Clear the filter and show every row again.
+                        if root.filter != "": VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 0;
+
+                            AppButton {
+                                icon: "close";
+                                tooltip: "Clear filter";
+                                variant: "ghost";
+                                size: "sm";
+                                clicked => {
+                                    root.filter = "";
+                                    root.apply-filter("");
+                                }
+                            }
+                        }
+                    }
+
+                    if root.filter == "": Text {
+                        x: 60px;
+                        y: (parent.height - self.height) / 2;
+                        text: "e.g. name ILIKE 'a%', then Enter";
+                        color: Theme.gutter-fg;
+                        font-size: Metrics.text-sm;
+                        font-family: Metrics.font-mono;
+                    }
+                }
+
+                AppButton {
+                    horizontal-stretch: 0;
+                    label: "Apply";
+                    icon: "filter";
+                    variant: "secondary";
+                    size: "sm";
+                    enabled: !root.loading;
+                    clicked => {
+                        root.apply-filter(root.filter);
+                    }
+                }
+
+                // A random sample for a quick look at a big table (tables only: TABLESAMPLE).
+                if root.object-kind == "table": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Select {
+                        width: 130px;
+                        options: ["All rows", "10 % sample", "1 % sample"];
+                        selected: root.sample == 10 ? 1 : root.sample == 1 ? 2 : 0;
+                        picked(i) => {
+                            root.pick-sample(i == 1 ? 10 : i == 2 ? 1 : 0);
+                        }
+                    }
+                }
+
+                Text {
+                    text: root.loading ? "Loading…" : root.range-label;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    horizontal-stretch: 0;
+                    min-width: 140px;
+                }
+
+                AppButton {
+                    horizontal-stretch: 0;
+                    icon: "prev";
+                    tooltip: "Previous page";
+                    variant: "outline";
+                    size: "sm";
+                    enabled: root.can-prev && !root.loading;
+                    clicked => {
+                        root.prev-page();
+                    }
+                }
+
+                AppButton {
+                    horizontal-stretch: 0;
+                    icon: "next";
+                    tooltip: "Next page";
+                    variant: "outline";
+                    size: "sm";
+                    enabled: root.can-next && !root.loading;
+                    clicked => {
+                        root.next-page();
+                    }
+                }
+            }
+        }
+
+        grid := ResultGrid {
+            focus-request: root.grid-focus-request;
+            changed r1 => {
+                root.block-r1 = self.r1;
+            }
+            changed r2 => {
+                root.block-r2 = self.r2;
+            }
+            columns: root.columns;
+            columns-width: root.columns-width;
+            rows: root.rows;
+            first-row: root.first-row;
+            editable: root.editable;
+            selected-row <=> root.selected-row;
+            selected-col <=> root.selected-col;
+            header-clicked(c) => {
+                root.sort(c);
+            }
+            // The panel, once open, follows the selection.
+            block-changed(r1, c1, r2, c2) => {
+                SelectionStore.data-block(r1, c1, r2, c2);
+            }
+            cell-clicked(r, c) => {
+                if (root.cell-open) {
+                    root.cell(r, c);
+                }
+            }
+            open-cell(r, c) => {
+                root.cell(r, c);
+                viewer.focus-editor();
+            }
+            commit-edit(r, c, text) => {
+                root.cell-commit(r, c, text);
+            }
+            save-requested => {
+                root.save();
+            }
+            filterable: true;
+            has-hidden: root.has-hidden;
+            anchor-row <=> root.anchor-row;
+            anchor-col <=> root.anchor-col;
+            action(name, r1, c1, r2, c2) => {
+                root.grid-action(name, r1, c1, r2, c2);
+            }
+            paste-text(r, c, text) => {
+                root.paste-text(r, c, text);
+            }
+            col-at(x) => {
+                return root.col-at(x);
+            }
+            column-resized(c, w) => {
+                root.column-resized(c, w);
+            }
+            column-fit(c) => {
+                root.column-fit(c);
+            }
+        }
+
+        if root.error != "": Rectangle {
+            min-height: 30px;
+            max-height: 30px;
+            background: Theme.destructive.with-alpha(0.1);
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    Icon {
+                        name: "error";
+                        tint: Theme.destructive;
+                        size: 13px;
+                    }
+                }
+
+                Text {
+                    text: root.error;
+                    color: Theme.destructive;
+                    font-size: Metrics.text-sm;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        // Unsaved work, always in view while it exists. It sits under the grid, not above it:
+        // appearing above would shift every row under the pointer mid-edit.
+        if root.pending > 0: Rectangle {
+            min-height: 36px;
+            max-height: 36px;
+            background: Theme.warning.with-alpha(0.10);
+
+            Rectangle {
+                y: 0;
+                width: parent.width;
+                height: 1px;
+                background: Theme.warning.with-alpha(0.4);
+            }
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s2;
+                spacing: Metrics.s2;
+
+                Text {
+                    text: root.saving ? "Saving…"
+                        : root.pending == 1 ? "1 row changed, not saved yet"
+                        : root.pending + " rows changed, not saved yet";
+                    color: Theme.warning;
+                    font-size: Metrics.text-sm;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Discard";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: !root.saving;
+                        clicked => {
+                            root.discard();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Save changes";
+                        tooltip: "Save (" + Keys.save + ")";
+                        variant: "primary";
+                        size: "sm";
+                        enabled: !root.saving;
+                        clicked => {
+                            root.save();
+                        }
+                    }
+                }
+            }
+        }
+
+        viewer := CellViewer {
+            visible: root.cell-open;
+            min-height: root.cell-open ? (root.editable ? 132px : 100px) : 0px;
+            max-height: root.cell-open ? (root.editable ? 132px : 100px) : 0px;
+            column: root.cell-column;
+            kind: root.cell-kind;
+            row-number: root.first-row + root.selected-row;
+            value: root.cell-value;
+            null: root.cell-null;
+            editable: root.editable;
+            new-row: root.cell-new-row;
+            staged: root.cell-staged;
+            draft <=> root.cell-draft;
+            close => {
+                root.close-cell();
+                grid.focus-grid();
+            }
+            apply(text) => {
+                root.cell-apply(text);
+            }
+            set-null => {
+                root.cell-set-null();
+            }
+            set-default => {
+                root.cell-default();
+            }
+            revert => {
+                root.cell-revert();
+            }
+            save-requested => {
+                root.save();
+            }
+        }
+        }
+    }
+}

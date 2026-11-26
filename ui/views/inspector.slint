@@ -1,26 +1,96 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme, Metrics } from "../theme.slint";
-import { Property } from "../models.slint";
+import { Property, InspectorSection } from "../models.slint";
 import { Icon } from "../components/icon.slint";
+import { AppButton } from "../components/app_button.slint";
 
-// Right pane: properties of whatever is selected in the object tree.
+// A label/value list under a small heading.
+component PropertyList inherits VerticalLayout {
+    in property <string> heading;
+    in property <[Property]> items;
+    in property <length> label-w: 84px;
+    // Column and constraint lists read name-first; detail lists read value-first.
+    in property <bool> emphasise-labels: false;
+
+    padding-top: Metrics.s2;
+    padding-bottom: Metrics.s2;
+    spacing: 0px;
+
+    Text {
+        text: root.heading;
+        color: Theme.muted-fg;
+        font-size: Metrics.text-xs;
+        font-weight: 600;
+        height: 22px;
+        vertical-alignment: center;
+    }
+
+    for entry in root.items: VerticalLayout {
+        padding-top: 3px;
+        padding-bottom: 3px;
+        spacing: 1px;
+
+        HorizontalLayout {
+            spacing: Metrics.s2;
+            min-height: 18px;
+
+            Text {
+                text: entry.label;
+                color: root.emphasise-labels ? Theme.foreground : Theme.muted-fg;
+                font-size: Metrics.text-sm;
+                font-family: entry.mono ? Metrics.font-mono : Metrics.font-ui;
+                vertical-alignment: center;
+                width: root.label-w;
+                overflow: elide;
+            }
+
+            Text {
+                text: entry.value;
+                color: root.emphasise-labels ? Theme.muted-fg : Theme.foreground;
+                font-size: Metrics.text-sm;
+                font-family: entry.mono ? Metrics.font-mono : Metrics.font-ui;
+                vertical-alignment: center;
+                horizontal-alignment: root.emphasise-labels ? right : left;
+                overflow: elide;
+            }
+        }
+
+        if entry.note != "": Text {
+            text: entry.note;
+            color: Theme.muted-fg;
+            font-size: Metrics.text-xs;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// Right pane: what is selected in the navigator, and what can be done with it.
 //
-// It is a reader, not an editor — changing an object is the Designer screen's job. Keeping it
-// read-only is what lets it show *any* node type without growing a mode per type.
+// It is a reader, not an editor — changing an object is the job of a screen. The actions it
+// offers are the ones that apply to the selection (connect a server, browse a table), so the
+// most likely next step is always one click from where the user is looking.
 export component Inspector inherits Rectangle {
     in property <string> title;
     in property <string> kind;
+    in property <string> subtitle;
     in property <[Property]> properties;
+    in property <[InspectorSection]> sections;
+    // A function's body or a materialized view's query.
+    in property <string> definition;
+    in property <string> comment;
+    // What could not be read (superuser-only catalogs), so a partial picture is not taken
+    // for a complete one.
+    in property <[string]> notes;
+    // Labels of the actions that apply; the first is the primary one.
+    in property <[string]> actions;
+    // Maintenance statements for the object (ANALYZE, VACUUM, REINDEX, CHECKPOINT).
+    in property <[string]> maintenance;
+    callback action(string);
 
-    // Pinned width — see the note in `activity_bar.slint`. Without the clamp the centre pane
-    // takes the whole row and pushes this one off the window.
     min-width: Metrics.inspector-w;
     max-width: Metrics.inspector-w;
     background: Theme.card;
 
-    // `border-l border-border` on the pane. The `x` is not optional: a child of a non-layout
-    // parent with no explicit position is centred, which would float this hairline down the
-    // middle of the pane instead of sitting on its left edge.
     Rectangle {
         x: 0;
         y: 0;
@@ -29,135 +99,177 @@ export component Inspector inherits Rectangle {
         background: Theme.border;
     }
 
-    VerticalLayout {
-        // ── Header ───────────────────────────────────────────────────────────
-        Rectangle {
-            min-height: Metrics.toolbar-h;
-            max-height: Metrics.toolbar-h;
-            vertical-stretch: 0;
+    if root.title == "": VerticalLayout {
+        alignment: center;
+        padding: Metrics.s5;
+        spacing: Metrics.s2;
 
-            Rectangle {
-                y: parent.height - 1px;
-                width: parent.width;
-                height: 1px;
-                background: Theme.border;
-            }
-
-            HorizontalLayout {
-                padding-left: Metrics.s3;
-                padding-right: Metrics.s3;
-                spacing: 6px;
-
-                Text {
-                    text: "INSPECTOR";
-                    color: Theme.muted-fg;
-                    font-size: Metrics.text-xs;
-                    font-weight: 600;
-                    letter-spacing: 0.6px;
-                    vertical-alignment: center;
-                }
-            }
+        Text {
+            text: "Nothing selected";
+            color: Theme.foreground;
+            font-size: Metrics.text-md;
+            font-weight: 500;
+            horizontal-alignment: center;
         }
 
-        // ── Selected object ──────────────────────────────────────────────────
-        if root.title != "": Rectangle {
-            min-height: 44px;
-            max-height: 44px;
-            vertical-stretch: 0;
+        Text {
+            text: "Select a server, database or table in the navigator to see its details here.";
+            color: Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+
+    if root.title != "": scroll := ScrollView {
+        x: 1px;
+        width: parent.width - 1px;
+
+        VerticalLayout {
+            width: scroll.visible-width;
+            padding-left: Metrics.s4;
+            padding-right: Metrics.s4;
+            padding-top: Metrics.s4;
+            padding-bottom: Metrics.s4;
+            spacing: Metrics.s2;
+            alignment: start;
 
             HorizontalLayout {
-                padding-left: Metrics.s3;
-                padding-right: Metrics.s3;
                 spacing: Metrics.s2;
 
                 VerticalLayout {
-                    alignment: center;
+                    alignment: start;
+                    padding-top: 2px;
                     horizontal-stretch: 0;
 
                     Icon {
                         name: root.kind;
-                        tint: Theme.primary;
-                        size: 15px;
+                        tint: root.kind == "table" ? Theme.ent-table
+                            : root.kind == "view" || root.kind == "matview" ? Theme.ent-view
+                            : root.kind == "database" ? Theme.ent-database
+                            : root.kind == "schema" ? Theme.ent-schema
+                            : Theme.ent-server;
+                        size: 16px;
                     }
                 }
 
                 VerticalLayout {
-                    alignment: center;
-                    spacing: 1px;
+                    spacing: 2px;
 
                     Text {
                         text: root.title;
                         color: Theme.foreground;
-                        font-size: Metrics.text-md;
+                        font-size: Metrics.text-lg;
                         font-weight: 600;
                         overflow: elide;
                     }
 
                     Text {
-                        text: root.kind;
+                        text: root.subtitle;
                         color: Theme.muted-fg;
-                        font-size: Metrics.text-xs;
+                        font-size: Metrics.text-sm;
+                        wrap: word-wrap;
                     }
                 }
             }
-        }
 
-        // ── Properties ───────────────────────────────────────────────────────
-        if root.properties.length > 0: props := ScrollView {
-            viewport-height: root.properties.length * 34px + Metrics.s2;
-
-            VerticalLayout {
-                width: props.visible-width;
+            if root.actions.length > 0: VerticalLayout {
                 padding-top: Metrics.s1;
-                alignment: start;
+                spacing: Metrics.s1;
 
-                for entry[index] in root.properties: Rectangle {
-                    height: 34px;
+                for label[i] in root.actions: AppButton {
+                    label: label;
+                    variant: i == 0 ? "primary" : "outline";
+                    size: "sm";
+                    height: 28px;
+                    clicked => {
+                        root.action(label);
+                    }
+                }
+            }
 
-                    HorizontalLayout {
-                        padding-left: Metrics.s3;
-                        padding-right: Metrics.s3;
-                        spacing: Metrics.s2;
+            if root.maintenance.length > 0: VerticalLayout {
+                spacing: 2px;
 
-                        VerticalLayout {
-                            alignment: center;
-                            width: 78px;
-                            horizontal-stretch: 0;
+                Text {
+                    text: "Maintenance";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-weight: 600;
+                }
 
-                            Text {
-                                text: entry.label;
-                                color: Theme.muted-fg;
-                                font-size: Metrics.text-sm;
-                                overflow: elide;
-                            }
-                        }
+                for label in root.maintenance: HorizontalLayout {
+                    alignment: start;
 
-                        VerticalLayout {
-                            alignment: center;
-
-                            Text {
-                                text: entry.value;
-                                color: Theme.foreground;
-                                font-size: Metrics.text-sm;
-                                font-family: entry.mono ? Metrics.font-mono : Metrics.font-ui;
-                                overflow: elide;
-                            }
+                    AppButton {
+                        label: label;
+                        variant: "ghost";
+                        size: "sm";
+                        height: 24px;
+                        clicked => {
+                            root.action(label);
                         }
                     }
                 }
             }
-        }
 
-        if root.title == "": VerticalLayout {
-            alignment: center;
-            padding-left: Metrics.s4;
-            padding-right: Metrics.s4;
+            if root.properties.length > 0: PropertyList {
+                heading: "Details";
+                items: root.properties;
+            }
 
-            Text {
-                text: "Select an object in the navigator to inspect it.";
-                color: Theme.muted-fg;
+            if root.comment != "": Text {
+                text: root.comment;
+                color: Theme.sidebar-fg;
                 font-size: Metrics.text-sm;
-                horizontal-alignment: center;
+                font-italic: true;
+                wrap: word-wrap;
+            }
+
+            for group in root.sections: PropertyList {
+                heading: group.heading;
+                items: group.items;
+                label-w: group.label-w;
+                emphasise-labels: group.emphasise;
+            }
+
+            if root.definition != "": VerticalLayout {
+                padding-top: Metrics.s2;
+                spacing: Metrics.s1;
+
+                Text {
+                    text: "Definition";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-weight: 600;
+                }
+
+                Rectangle {
+                    border-radius: Metrics.radius-sm;
+                    background: Theme.background;
+
+                    VerticalLayout {
+                        padding: Metrics.s2;
+
+                        TextInput {
+                            text: root.definition;
+                            read-only: true;
+                            single-line: false;
+                            wrap: word-wrap;
+                            color: Theme.sql-ident;
+                            font-size: Metrics.text-xs;
+                            font-family: Metrics.font-mono;
+                            selection-background-color: Theme.primary.with-alpha(0.35);
+                            selection-foreground-color: Theme.foreground;
+                        }
+                    }
+                }
+            }
+
+            for note in root.notes: Text {
+                text: note;
+                color: Theme.warning;
+                font-size: Metrics.text-xs;
                 wrap: word-wrap;
             }
         }

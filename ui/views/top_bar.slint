@@ -3,50 +3,27 @@ import { Icon } from "../components/icon.slint";
 import { AppButton } from "../components/app_button.slint";
 import { StatusDot } from "../components/status_dot.slint";
 
-// A 1px vertical rule between toolbar groups.
-component Divider inherits VerticalLayout {
-    alignment: center;
-    horizontal-stretch: 0;
-
-    Rectangle {
-        width: 1px;
-        height: 20px;
-        background: Theme.border;
-    }
-}
-
-// Top chrome: identity, the active-connection switcher, the run and transaction controls, and
-// the app-level actions.
+// Top chrome: identity, what Studio is pointed at, and the theme switch.
+//
+// Run and transaction controls live on the editor's own toolbar, next to the text they act
+// on; a second copy up here only made it unclear which one to press.
 //
 // The reference mockup draws macOS traffic lights here; Studio does not, because Slint lets
-// the operating system draw the real window decorations — painting a second set would give
-// every platform two title bars.
+// the operating system draw the real window decorations.
 export component TopBar inherits Rectangle {
-    in property <string> connection-label: "No connection";
+    in property <string> connection-label: "Not connected";
     in property <string> connection-status: "disconnected";
     in property <bool> connected: false;
-    // "idle" | "active" | "failed"
-    in property <string> txn-state: "idle";
+    in property <string> env: "";
+    in property <bool> inspector-visible: true;
+    // Whether the current screen has a details panel at all.
+    in property <bool> inspector-available: true;
     callback open-connections();
-    callback toggle-theme();
-
-    property <color> txn-tone: root.txn-state == "active" ? Theme.success
-        : root.txn-state == "failed" ? Theme.destructive
-        : Theme.muted-fg;
-
-    // Responsive tiers, decided by the window and passed in.
-    //
-    // They are inputs rather than `root.width` comparisons on purpose: a toolbar that chooses
-    // its own children from its own width is a binding loop — the children determine the
-    // layout, which determines the width, which would determine the children.
-    in property <bool> roomy: true;
-    in property <bool> mid: true;
+    callback toggle-inspector();
 
     min-height: Metrics.topbar-h;
     max-height: Metrics.topbar-h;
     background: Theme.chrome;
-    // An explicit minimum stops the row's contents from inflating the window's minimum size;
-    // clipping keeps whatever does not fit from spilling over the panes.
     min-width: 0px;
     clip: true;
 
@@ -59,60 +36,57 @@ export component TopBar inherits Rectangle {
 
     HorizontalLayout {
         padding-left: Metrics.s3;
-        padding-right: Metrics.s3;
-        spacing: Metrics.s1;
+        padding-right: Metrics.s2;
+        spacing: Metrics.s2;
 
         // ── Identity ─────────────────────────────────────────────────────────
-        VerticalLayout {
-            alignment: center;
+        // A wordmark, not an app-icon tile: the window title already carries the name, so
+        // this only has to anchor the bar.
+        HorizontalLayout {
             horizontal-stretch: 0;
-
-            Rectangle {
-                width: 22px;
-                height: 22px;
-                border-radius: Metrics.radius-sm;
-                background: Theme.primary.with-alpha(0.2);
-
-                Icon {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    name: "database";
-                    tint: Theme.primary;
-                    size: 13px;
-                }
-            }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-            padding-left: Metrics.s2;
+            spacing: 6px;
             padding-right: Metrics.s3;
 
+            VerticalLayout {
+                alignment: center;
+
+                Icon {
+                    name: "database";
+                    tint: Theme.primary;
+                    size: 15px;
+                }
+            }
+
             Text {
-                text: "NusaDB Studio";
+                text: "NusaDB";
                 color: Theme.foreground;
                 font-size: Metrics.text-md;
                 font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "Studio";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-md;
+                vertical-alignment: center;
             }
         }
 
-        // ── Active connection ────────────────────────────────────────────────
+        // ── Active target ────────────────────────────────────────────────────
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
 
             switcher := Rectangle {
-                height: Metrics.control-sm-h;
-                border-radius: Metrics.radius-sm;
-                border-width: 1px;
-                border-color: Theme.border;
+                height: 26px;
+                border-radius: Metrics.radius;
                 background: switcher-touch.has-hover ? Theme.muted : Colors.transparent;
 
                 HorizontalLayout {
                     padding-left: Metrics.s2;
                     padding-right: Metrics.s2;
-                    spacing: 6px;
+                    spacing: 7px;
 
                     VerticalLayout {
                         alignment: center;
@@ -127,17 +101,33 @@ export component TopBar inherits Rectangle {
                         text: root.connection-label;
                         color: root.connected ? Theme.foreground : Theme.muted-fg;
                         font-size: Metrics.text-sm;
-                        font-family: Metrics.font-mono;
+                        font-family: root.connected ? Metrics.font-mono : Metrics.font-ui;
                         vertical-alignment: center;
                     }
 
-                    VerticalLayout {
+                    // Production gets a word, not just a colour: it is the one environment
+                    // where running the wrong script costs something.
+                    if root.env == "prod": VerticalLayout {
                         alignment: center;
 
-                        Icon {
-                            name: "chevron-down";
-                            tint: Theme.muted-fg;
-                            size: 10px;
+                        Rectangle {
+                            height: 16px;
+                            border-radius: Metrics.radius-sm;
+                            background: Theme.env-prod.with-alpha(0.16);
+
+                            HorizontalLayout {
+                                padding-left: 5px;
+                                padding-right: 5px;
+
+                                Text {
+                                    text: "PRODUCTION";
+                                    color: Theme.env-prod;
+                                    font-size: 10px;
+                                    font-weight: 600;
+                                    letter-spacing: 0.4px;
+                                    vertical-alignment: center;
+                                }
+                            }
                         }
                     }
                 }
@@ -151,174 +141,7 @@ export component TopBar inherits Rectangle {
             }
         }
 
-        Divider { }
-
-        // ── Run controls ─────────────────────────────────────────────────────
-        VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                label: "Run";
-                icon: "play";
-                variant: "primary";
-                size: "sm";
-                enabled: root.connected;
-            }
-        }
-
-        if root.mid: VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                label: "Selection";
-                icon: "selection";
-                variant: "ghost";
-                size: "sm";
-                enabled: root.connected;
-            }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                icon: "stop";
-                variant: "ghost";
-                size: "sm";
-                enabled: false;
-            }
-        }
-
-        Divider { }
-
-        // ── Transaction controls ─────────────────────────────────────────────
-        if root.roomy: VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                label: "Begin";
-                variant: "ghost";
-                size: "sm";
-                enabled: root.connected && root.txn-state == "idle";
-            }
-        }
-
-        if root.roomy: VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                label: "Commit";
-                variant: "ghost";
-                size: "sm";
-                enabled: root.txn-state == "active";
-            }
-        }
-
-        if root.roomy: VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                label: "Rollback";
-                variant: "ghost";
-                size: "sm";
-                enabled: root.txn-state != "idle";
-            }
-        }
-
-        if root.roomy: VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                label: "Savepoint";
-                variant: "ghost";
-                size: "sm";
-                enabled: root.txn-state == "active";
-            }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-            padding-right: Metrics.s2;
-
-            Rectangle {
-                height: 18px;
-                border-radius: 9px;
-                border-width: 1px;
-                border-color: root.txn-tone.with-alpha(0.3);
-                background: root.txn-tone.with-alpha(0.1);
-
-                HorizontalLayout {
-                    padding-left: 7px;
-                    padding-right: 7px;
-                    spacing: 5px;
-
-                    VerticalLayout {
-                        alignment: center;
-
-                        StatusDot {
-                            status: root.txn-state == "active" ? "connected"
-                                : root.txn-state == "failed" ? "error"
-                                : "disconnected";
-                            diameter: 6px;
-                        }
-                    }
-
-                    Text {
-                        text: "txn: " + root.txn-state;
-                        color: root.txn-tone;
-                        font-size: Metrics.text-xs;
-                        font-weight: 500;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-        }
-
-        // ── App actions ──────────────────────────────────────────────────────
         Rectangle { }
 
-        if root.roomy: VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                icon: "bell";
-                variant: "ghost";
-                size: "sm";
-            }
-        }
-
-        if root.roomy: VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                icon: "settings";
-                variant: "ghost";
-                size: "sm";
-            }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-
-            AppButton {
-                icon: Theme.dark ? "sun" : "moon";
-                variant: "ghost";
-                size: "sm";
-                clicked => {
-                    root.toggle-theme();
-                }
-            }
-        }
     }
 }

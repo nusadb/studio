@@ -1,0 +1,504 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Metrics } from "../theme.slint";
+import { ProfileCard, CorrRow } from "../models.slint";
+import { Pill } from "../components/select.slint";
+import { AppButton } from "../components/app_button.slint";
+import { Tip } from "../components/tooltip.slint";
+
+component Card inherits Rectangle {
+    in property <ProfileCard> card;
+
+    border-radius: Metrics.radius;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.card;
+    height: body.preferred-height;
+
+    body := VerticalLayout {
+        padding: Metrics.s3;
+        spacing: Metrics.s2;
+
+        // Name, type, and how much of it is NULL.
+        HorizontalLayout {
+            spacing: Metrics.s2;
+
+            Text {
+                text: root.card.name;
+                color: Theme.foreground;
+                font-size: Metrics.text-md;
+                font-weight: 600;
+                font-family: Metrics.font-mono;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+
+            Text {
+                text: root.card.kind;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                font-family: Metrics.font-mono;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Metrics.s2;
+            height: 14px;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 3px;
+                background: Theme.primary.with-alpha(0.22);
+                clip: true;
+
+                Rectangle {
+                    x: parent.width - self.width;
+                    width: parent.width * root.card.nulls-share;
+                    background: Theme.warning.with-alpha(0.7);
+                }
+            }
+
+            Text {
+                text: root.card.nulls;
+                color: root.card.nulls-share > 0 ? Theme.warning : Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                vertical-alignment: center;
+                min-width: 80px;
+                horizontal-alignment: right;
+            }
+        }
+
+        // Statistics, two per row.
+        for s in root.card.stats: HorizontalLayout {
+            spacing: Metrics.s2;
+
+            Text {
+                text: s.label;
+                color: Theme.muted-fg;
+                font-size: Metrics.text-sm;
+                min-width: 90px;
+                max-width: 90px;
+            }
+
+            Text {
+                text: s.value;
+                color: Theme.foreground;
+                font-size: Metrics.text-sm;
+                font-family: Metrics.font-mono;
+                overflow: elide;
+                horizontal-stretch: 1;
+
+                TouchArea {
+                    changed has-hover => {
+                        if (self.has-hover) {
+                            Tip.request(s.label + ": " + s.value, self.absolute-position.x + self.width / 2,
+                                self.absolute-position.y + self.height);
+                        } else {
+                            Tip.dismiss();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Histogram of a numeric column.
+        if root.card.histogram.length > 0: VerticalLayout {
+            spacing: 3px;
+
+            Text {
+                text: "DISTRIBUTION";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                font-weight: 600;
+            }
+
+            hist := Rectangle {
+                height: 56px;
+
+                for b[i] in root.card.histogram: Rectangle {
+                    x: i * hist.width / root.card.histogram.length + 1px;
+                    width: hist.width / root.card.histogram.length - 2px;
+                    height: b.share * hist.height;
+                    visible: b.share > 0;
+                    y: hist.height - self.height;
+                    border-radius: 1px;
+                    background: bar-touch.has-hover ? Theme.primary.darker(0.15) : Theme.primary.with-alpha(0.8);
+
+                    bar-touch := TouchArea {
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                Tip.request(b.label + ": " + b.value + " rows", self.absolute-position.x + self.width / 2,
+                                    self.absolute-position.y);
+                            } else {
+                                Tip.dismiss();
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                Text {
+                    text: root.card.hist-from;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-family: Metrics.font-mono;
+                }
+
+                Text {
+                    text: root.card.hist-to;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-family: Metrics.font-mono;
+                    horizontal-alignment: right;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        // Commonest values.
+        if root.card.top.length > 0: VerticalLayout {
+            spacing: 3px;
+
+            Text {
+                text: "MOST COMMON";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-xs;
+                font-weight: 600;
+            }
+
+            for t in root.card.top: HorizontalLayout {
+                spacing: Metrics.s2;
+                height: 18px;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * t.share;
+                        border-radius: 2px;
+                        background: Theme.primary.with-alpha(0.14);
+                    }
+
+                    TouchArea {
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                Tip.request(t.label + "  ·  " + t.value + " rows", self.absolute-position.x + self.width / 2,
+                                    self.absolute-position.y + self.height);
+                            } else {
+                                Tip.dismiss();
+                            }
+                        }
+                    }
+
+                    Text {
+                        x: 4px;
+                        width: parent.width - 8px;
+                        text: t.label;
+                        color: t.label == "NULL" ? Theme.muted-fg : Theme.foreground;
+                        font-italic: t.label == "NULL";
+                        font-size: Metrics.text-xs;
+                        font-family: Metrics.font-mono;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                Text {
+                    text: t.value;
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-xs;
+                    font-family: Metrics.font-mono;
+                    vertical-alignment: center;
+                    min-width: 48px;
+                    horizontal-alignment: right;
+                }
+            }
+        }
+    }
+}
+
+// The Profile tab of a table or view: what is in each column, computed by the server.
+export component ProfileView inherits Rectangle {
+    // "" (not run) | "running" | "ready" | "error"
+    in property <string> state;
+    in property <string> message;
+    // Rows the profile read, and over what ("whole table" / "10 % sample").
+    in property <string> summary;
+    // 0 whole table, else the sample percentage.
+    in property <int> sample;
+    in property <bool> can-sample: true;
+    in property <[ProfileCard]> cards;
+    in property <[string]> corr-names;
+    in property <[CorrRow]> corr-rows;
+    callback run(int);
+    callback open-sql();
+    callback copy-markdown();
+    callback export-csv();
+
+    background: Theme.background;
+
+    VerticalLayout {
+        Rectangle {
+            height: 44px;
+            background: Theme.card;
+
+            HorizontalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                spacing: Metrics.s2;
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Text {
+                        text: "Read";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                    }
+                }
+
+                for s in [
+                    { pct: 0, label: "Whole table", tip: "Every row; exact, slower on a big table" },
+                    { pct: 10, label: "10 % sample", tip: "A random tenth of the rows (TABLESAMPLE); tables only" },
+                    { pct: 1, label: "1 % sample", tip: "A random hundredth of the rows (TABLESAMPLE); tables only" },
+                ]: VerticalLayout {
+                    alignment: center;
+
+                    Pill {
+                        label: s.label;
+                        tooltip: s.tip;
+                        on: root.sample == s.pct;
+                        enabled: root.state != "running" && (s.pct == 0 || root.can-sample);
+                        picked => {
+                            root.run(s.pct);
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Text {
+                        text: root.state == "running" ? "Profiling…" : root.summary;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "copy";
+                        tooltip: "Copy the profile as a Markdown table";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.state == "ready";
+                        clicked => {
+                            root.copy-markdown();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        icon: "download";
+                        tooltip: "Save the profile as CSV";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.state == "ready";
+                        clicked => {
+                            root.export-csv();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: "Open SQL";
+                        icon: "open";
+                        tooltip: "The statements behind this profile, in a query tab";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.state == "ready";
+                        clicked => {
+                            root.open-sql();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    AppButton {
+                        label: root.state == "" ? "Profile" : "Refresh";
+                        icon: root.state == "" ? "play" : "refresh";
+                        variant: root.state == "" ? "primary" : "ghost";
+                        size: "sm";
+                        enabled: root.state != "running";
+                        clicked => {
+                            root.run(root.sample);
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+
+        if root.state == "" || root.state == "error": Rectangle {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: Metrics.s2;
+
+                Text {
+                    text: root.state == "error" ? "The profile could not be read" : "Profile the columns";
+                    color: Theme.foreground;
+                    font-size: Metrics.text-md;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: root.state == "error" ? root.message
+                        : "Nulls, distinct values, range, mean, quartiles, common values, distribution and correlation.";
+                    color: root.state == "error" ? Theme.destructive : Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        if root.state == "running" || root.state == "ready": ScrollView {
+            vertical-stretch: 1;
+
+            property <int> per-row: max(1, Math.floor(self.visible-width / 300px));
+            property <length> card-w: (self.visible-width - Metrics.s3 * (self.per-row + 1)) / self.per-row;
+
+            VerticalLayout {
+                padding: Metrics.s3;
+                spacing: Metrics.s3;
+
+                // Cards in rows of as many as fit.
+                Rectangle {
+                    height: cards-flow.preferred-height;
+
+                    cards-flow := VerticalLayout {
+                        spacing: Metrics.s3;
+
+                        for r in Math.ceil(root.cards.length / per-row): HorizontalLayout {
+                            spacing: Metrics.s3;
+                            alignment: start;
+
+                            for c in per-row: Rectangle {
+                                width: card-w;
+                                height: (r * per-row + c) < root.cards.length ? card.preferred-height : 0px;
+
+                                card := Card {
+                                    visible: (r * per-row + c) < root.cards.length;
+                                    width: parent.width;
+                                    card: (r * per-row + c) < root.cards.length ? root.cards[r * per-row + c] : root.cards[0];
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Correlation of numeric columns.
+                if root.corr-names.length >= 2: VerticalLayout {
+                    spacing: Metrics.s2;
+
+                    Text {
+                        text: "CORRELATION (PEARSON)";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-xs;
+                        font-weight: 600;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 4px;
+
+                        Rectangle { width: 140px; }
+
+                        for n in root.corr-names: Text {
+                            width: 76px;
+                            text: n;
+                            color: Theme.muted-fg;
+                            font-size: Metrics.text-xs;
+                            font-family: Metrics.font-mono;
+                            horizontal-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+
+                    for row in root.corr-rows: HorizontalLayout {
+                        alignment: start;
+                        spacing: 4px;
+                        height: 26px;
+
+                        Text {
+                            width: 140px;
+                            text: row.name;
+                            color: Theme.foreground;
+                            font-size: Metrics.text-sm;
+                            font-family: Metrics.font-mono;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        for cell[ci] in row.cells: Rectangle {
+                            width: 76px;
+                            height: 26px;
+                            border-radius: 3px;
+                            background: !cell.valid ? Theme.muted
+                                : cell.value >= 0 ? Theme.primary.with-alpha(0.08 + cell.value * 0.7)
+                                : Theme.destructive.with-alpha(0.08 - cell.value * 0.7);
+
+                            TouchArea {
+                                changed has-hover => {
+                                    if (self.has-hover) {
+                                        Tip.request(row.name + " × " + root.corr-names[ci] + ": " + cell.text, self.absolute-position.x + self.width / 2,
+                                            self.absolute-position.y + self.height);
+                                    } else {
+                                        Tip.dismiss();
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: cell.text;
+                                color: cell.valid && (cell.value > 0.6 || cell.value < -0.6) ? Theme.on-primary : Theme.foreground;
+                                font-size: Metrics.text-sm;
+                                font-family: Metrics.font-mono;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "1 or -1: the two columns move together (or opposite); near 0: no linear relation.";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-xs;
+                    }
+                }
+            }
+        }
+    }
+}

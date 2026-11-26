@@ -12,7 +12,14 @@ export component TextField inherits Rectangle {
     callback edited();
     callback accepted();
 
+    // Take the keyboard with the text selected, ready to be typed over.
+    public function focus-input() {
+        input.focus();
+        input.select-all();
+    }
+
     height: Metrics.control-h;
+    clip: true;
     background: Theme.input-bg;
     border-radius: Metrics.radius;
     border-width: 1px;
@@ -22,10 +29,15 @@ export component TextField inherits Rectangle {
         padding-left: Metrics.s2;
         padding-right: Metrics.s2;
 
+        // A long value scrolls inside the field instead of widening the layout around it.
         VerticalLayout {
             alignment: center;
+            min-width: 0px;
 
             input := TextInput {
+                min-width: 0px;
+                preferred-width: 0px;
+                horizontal-stretch: 1;
                 text <=> root.text;
                 font-size: Metrics.text-md;
                 font-family: root.mono ? Metrics.font-mono : Metrics.font-ui;
@@ -49,8 +61,12 @@ export component TextField inherits Rectangle {
     if root.text == "": Text {
         x: Metrics.s2;
         y: (parent.height - self.height) / 2;
+        // Never wider than the field: a long hint is cut with an ellipsis.
+        width: parent.width - 2 * Metrics.s2;
         text: root.placeholder;
         color: Theme.muted-fg;
         font-size: Metrics.text-md;
+        font-family: root.mono ? Metrics.font-mono : Metrics.font-ui;
+        overflow: elide;
     }
 }

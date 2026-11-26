@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.nusadb.Studio</id>
+  <name>NusaDB Studio</name>
+  <summary>Desktop database manager for NusaDB</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <developer id="com.nusadb">
+    <name>NusaDB</name>
+  </developer>
+  <url type="homepage">https://nusadb.com</url>
+  <url type="bugtracker">https://github.com/nusadb/studio/issues</url>
+  <content_rating type="oars-1.1"/>
+  <project_license>Apache-2.0</project_license>
+  <description>
+    <p>
+      NusaDB Studio is a native desktop tool for NusaDB: a SQL editor with completion,
+      formatting and find/replace, an editable data grid with import and export, a table
+      designer, an ER diagram, live server metrics, role and row-level-security management,
+      and LISTEN/NOTIFY.
+    </p>
+  </description>
+  <launchable type="desktop-id">nusadb-studio.desktop</launchable>
+  <categories>
+    <category>Development</category>
+    <category>Database</category>
+  </categories>
+  <provides>
+    <binary>nusadb-studio</binary>
+  </provides>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

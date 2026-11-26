@@ -1,15 +1,17 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme, Metrics } from "../theme.slint";
-import { SqlLine, GridColumn } from "../models.slint";
+import { SqlLayer, GridColumn, GridRow, MessageRow, HistoryRow, PlanRow, QueryTabRow, CompletionRow, NotifyRow, ResultPart, ChartBar, ChartPoint, ChartTick, ChartSlice } from "../models.slint";
+import { ChartView } from "chart_view.slint";
+import { PivotView } from "pivot_view.slint";
+import { PivotStore, SelectionStore } from "../stores.slint";
+import { NotificationsPanel } from "notifications.slint";
 import { Icon } from "../components/icon.slint";
 import { AppButton } from "../components/app_button.slint";
-
-// Height of one line in the editor. The gutter and the code column both use it, which is what
-// keeps the line numbers aligned with the lines they number.
-global Editor {
-    out property <length> line-h: 20px;
-    out property <length> gutter-w: 38px;
-}
+import { SqlEditor } from "../components/sql_editor.slint";
+import { ResultGrid } from "../components/result_grid.slint";
+import { CellViewer } from "../components/cell_viewer.slint";
+import { Keys } from "../keys.slint";
+import { Tip } from "../components/tooltip.slint";
 
 // A 1px vertical rule between toolbar groups.
 component Divider inherits VerticalLayout {
@@ -23,88 +25,50 @@ component Divider inherits VerticalLayout {
     }
 }
 
-// One segment of the breadcrumb that retargets a query without leaving the tab.
-component Crumb inherits Rectangle {
-    in property <string> label;
-    in property <string> icon;
-
-    height: 22px;
-    horizontal-stretch: 0;
-    // Capped: a breadcrumb is a hint, and letting a long name grow the toolbar would push the
-    // inspector out of the row.
-    max-width: 96px;
-    border-radius: Metrics.radius-sm;
-    border-width: 1px;
-    border-color: Theme.border;
-    background: touch.has-hover ? Theme.muted : Colors.transparent;
-
-    HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        spacing: 4px;
-
-        VerticalLayout {
-            alignment: center;
-
-            Icon {
-                name: root.icon;
-                tint: Theme.muted-fg;
-                size: 10px;
-            }
-        }
-
-        Text {
-            text: root.label;
-            color: Theme.foreground;
-            font-size: Metrics.text-sm;
-            font-family: Metrics.font-mono;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-
-        VerticalLayout {
-            alignment: center;
-
-            Icon {
-                name: "chevron-down";
-                tint: Theme.muted-fg;
-                size: 9px;
-            }
-        }
-    }
-
-    touch := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-    }
-}
-
-// One tab of the results panel.
+// One tab of the results panel. The count, when there is one, sits beside the label.
 component ResultTab inherits Rectangle {
     in property <string> label;
+    in property <string> count;
     in property <string> id;
     in property <string> active-id;
+    in property <bool> alert;
     callback picked();
 
     property <bool> active: root.id == root.active-id;
 
-    width: 74px;
     horizontal-stretch: 0;
+    min-width: tab-row.preferred-width;
     background: Colors.transparent;
 
-    Text {
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        text: root.label;
-        color: root.active ? Theme.primary : (touch.has-hover ? Theme.foreground : Theme.muted-fg);
-        font-size: Metrics.text-sm;
+    tab-row := HorizontalLayout {
+        padding-left: Metrics.s3;
+        padding-right: Metrics.s3;
+        spacing: 5px;
+
+        Text {
+            text: root.label;
+            color: root.alert ? Theme.destructive
+                : root.active ? Theme.foreground
+                : touch.has-hover ? Theme.foreground : Theme.muted-fg;
+            font-size: Metrics.text-sm;
+            font-weight: root.active ? 600 : 400;
+            vertical-alignment: center;
+        }
+
+        if root.count != "": Text {
+            text: root.count;
+            color: Theme.muted-fg;
+            font-size: Metrics.text-xs;
+            font-family: Metrics.font-mono;
+            vertical-alignment: center;
+        }
     }
 
-    // Active-tab underline, drawn on the panel's bottom edge.
     Rectangle {
         y: parent.height - 2px;
         width: parent.width;
         height: 2px;
-        background: root.active ? Theme.primary : Colors.transparent;
+        background: root.active ? (root.alert ? Theme.destructive : Theme.primary) : Colors.transparent;
     }
 
     touch := TouchArea {
@@ -115,35 +79,330 @@ component ResultTab inherits Rectangle {
     }
 }
 
-// Centre screen: the SQL workspace — editor on top, results below.
-export component Workspace inherits Rectangle {
-    in property <[SqlLine]> lines;
-    in property <[GridColumn]> columns;
-    in property <string> server-crumb: "—";
-    in property <string> database-crumb: "—";
-    in property <string> schema-crumb: "public";
-    in property <bool> connected: false;
-    in property <string> result-summary;
-    in-out property <string> result-tab: "results";
-
-    // Responsive tiers, decided by the window and passed in — see the note in `top_bar.slint`
-    // for why these are inputs rather than comparisons against this pane's own width.
-    // The breadcrumb goes first, then the secondary run actions.
-    in property <bool> roomy: true;
-    in property <bool> mid: true;
+// Read-only, selectable monospace text — the JSON and Plan tabs. Selectable so it can be
+// copied out with the keyboard.
+component TextPane inherits Rectangle {
+    in property <string> text;
+    in property <string> empty-text;
 
     background: Theme.background;
-    // The centre pane must be free to shrink: any minimum it declares is added to the row's,
-    // and the row's minimum is what stops the window from getting smaller.
+    clip: true;
+
+    if root.text == "": Text {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        text: root.empty-text;
+        color: Theme.muted-fg;
+        font-size: Metrics.text-sm;
+    }
+
+    if root.text != "": pane := Flickable {
+        viewport-width: max(self.width, body.preferred-width + 2 * Metrics.s3);
+        viewport-height: max(self.height, body.preferred-height + 2 * Metrics.s3);
+
+        body := TextInput {
+            x: Metrics.s3;
+            y: Metrics.s3;
+            text: root.text;
+            read-only: true;
+            single-line: false;
+            wrap: no-wrap;
+            color: Theme.foreground;
+            font-size: Metrics.text-sm;
+            font-family: Metrics.font-mono;
+            selection-background-color: Theme.primary.with-alpha(0.35);
+            selection-foreground-color: Theme.foreground;
+        }
+    }
+}
+
+// Centre screen: the SQL workspace — editor on top, results below.
+export component Workspace inherits Rectangle {
+    in property <[SqlLayer]> layers;
+    in property <string> line-numbers;
+    in-out property <string> sql-text;
+    in property <[GridColumn]> columns;
+    in property <length> columns-width;
+    in property <[GridRow]> rows;
+    in property <[MessageRow]> messages;
+    // Result sets of a script that returned more than one, and the one showing.
+    in property <[ResultPart]> result-parts;
+    in property <int> result-part;
+    callback pick-part(int);
+    // Chart tab: what is drawn, set by the controller from the showing result.
+    in property <[string]> chart-columns;
+    in property <string> chart-kind: "bar";
+    in property <int> chart-x: -1;
+    in property <int> chart-y: -1;
+    in property <string> chart-agg: "sum";
+    in property <int> chart-series: -1;
+    in property <string> chart-order: "result";
+    in property <int> chart-top: -1;
+    in property <[ChartSlice]> chart-slices;
+    in property <[string]> chart-legend;
+    in property <[ChartBar]> chart-bars;
+    in property <[ChartPoint]> chart-points;
+    in property <string> chart-line;
+    in property <[ChartTick]> chart-x-ticks;
+    in property <[ChartTick]> chart-y-ticks;
+    in property <string> chart-x-title;
+    in property <string> chart-y-title;
+    in property <string> chart-note;
+    callback chart-opened();
+    callback chart-set(string, int, string);
+    callback chart-copy-data();
+    callback chart-export();
+    callback chart-copy();
+    in property <string> json-text;
+    in property <[PlanRow]> plan-rows;
+    in property <[HistoryRow]> history;
+    // The selected grid cell, shown in full under the grid.
+    in-out property <int> selected-row: -1;
+    in-out property <int> selected-col: -1;
+    in property <bool> cell-open;
+    in property <string> cell-column;
+    in property <string> cell-kind;
+    in property <string> cell-value;
+    in property <bool> cell-null;
+    in-out property <string> cell-draft;
+    in property <bool> cell-staged;
+    // The result came from one table with its primary key: cells can be edited and saved.
+    in property <bool> results-editable;
+    // Why it cannot be, when it cannot (empty while there is nothing to say).
+    in property <string> results-read-only;
+    in property <int> results-pending;
+    in property <bool> results-saving;
+    in property <string> results-error;
+    callback column-resized(int, length);
+    callback column-fit(int);
+    callback grid-action(string, int, int, int, int);
+    callback paste-text(int, int, string);
+    pure callback col-at(length) -> int;
+    in property <bool> has-hidden;
+    in-out property <int> anchor-row: -1;
+    in-out property <int> anchor-col: -1;
+    callback cell-commit(int, int, string);
+    callback cell-apply(string);
+    callback cell-set-null();
+    callback cell-revert();
+    callback save-results();
+    callback discard-results();
+    // "server / database" the script runs against, or empty.
+    in property <string> target-label;
+    in property <bool> has-target;
+    in property <bool> running;
+    // "idle" | "active" | "failed"
+    in property <string> txn-state: "idle";
+    in property <string> result-summary;
+    in property <string> rows-note;
+    in property <bool> has-error;
+    in-out property <string> result-tab: "results";
+
+    callback edited(string, int);
+    callback caret-moved(int);
+    in property <[CompletionRow]> completions;
+    in-out property <int> completion-index;
+    in property <int> completion-line;
+    in property <int> completion-col;
+    in property <int> caret-target;
+    in property <int> caret-serial;
+    callback complete-request(string, int);
+    callback complete-accept(int);
+    callback complete-cancel();
+    callback run();
+    callback run-current(int, int);
+    callback explain(int, int);
+    callback stop();
+    callback txn(string);
+    callback open-servers();
+    callback sort(int);
+    callback cell(int, int);
+    callback close-cell();
+    callback pick-history(int);
+    // LISTEN / NOTIFY on the target database.
+    in property <[NotifyRow]> notify-rows;
+    in property <[string]> notify-channels;
+    in property <string> notify-status;
+    in property <bool> notify-failed;
+    callback notify-listen(string);
+    callback notify-unlisten(string);
+    callback notify-send(string, string);
+    callback notify-clear();
+    callback copy-row();
+    callback copy-all();
+    callback export();
+    in property <[QueryTabRow]> tabs;
+    callback tab-new();
+    callback file-open();
+    // Find / replace and format in the editor.
+    in-out property <bool> find-open;
+    in-out property <bool> find-replace;
+    in-out property <string> find-text;
+    in-out property <string> replace-text;
+    in-out property <bool> find-case;
+    in property <string> find-status;
+    in property <int> select-end: -1;
+    in property <int> reveal-line;
+    in property <int> reveal-col;
+    in property <int> reveal-serial;
+    callback find-changed(string, bool);
+    callback find-step(bool);
+    callback replace-one();
+    callback replace-all();
+    callback format-sql();
+    callback file-save();
+    callback file-save-as();
+    callback tab-select(int);
+    callback tab-close(int);
+
+    // Share of the height the editor takes; the rest goes to the results. Dragged with the
+    // splitter between them.
+    in-out property <float> editor-share: 0.42;
+    // The splitter was let go: the owner remembers the share for the next start.
+    callback split-moved(float);
+
+    // Seconds since the current run started, counted here so the controller need not tick.
+    property <int> running-tenths;
+
+    background: Theme.background;
     min-width: 0px;
     min-height: 0px;
     clip: true;
 
+    Timer {
+        interval: 100ms;
+        running: root.running;
+        triggered => {
+            root.running-tenths += 1;
+        }
+    }
+
+    changed running => {
+        root.running-tenths = 0;
+    }
+
     VerticalLayout {
+        // ── Query tabs ───────────────────────────────────────────────────────
+        Rectangle {
+            min-height: 30px;
+            max-height: 30px;
+            vertical-stretch: 0;
+            background: Theme.chrome;
+            clip: true;
+
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                padding-left: Metrics.s1;
+
+                for tab in root.tabs: Rectangle {
+                    horizontal-stretch: 0;
+                    min-width: 96px;
+                    max-width: 220px;
+                    background: tab.active ? Theme.card : tab-touch.has-hover ? Theme.muted.with-alpha(0.5) : Colors.transparent;
+
+                    tab-touch := TouchArea {
+                        clicked => {
+                            root.tab-select(tab.id);
+                        }
+                        // Middle-click closes, as in browsers and IDEs.
+                        pointer-event(event) => {
+                            if (event.button == PointerEventButton.middle && event.kind == PointerEventKind.up) {
+                                root.tab-close(tab.id);
+                            }
+                        }
+                    }
+
+                    // The active tab is joined to the toolbar under it: no bottom rule, a
+                    // top accent instead.
+                    Rectangle {
+                        y: 0;
+                        width: parent.width;
+                        height: 2px;
+                        background: tab.active ? Theme.primary : Colors.transparent;
+                    }
+
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        height: parent.height;
+                        background: Theme.border;
+                    }
+
+                    HorizontalLayout {
+                        padding-left: Metrics.s3;
+                        padding-right: 4px;
+                        spacing: 6px;
+
+                        if tab.running || tab.unseen: VerticalLayout {
+                            alignment: center;
+
+                            Rectangle {
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: tab.running ? Theme.warning : Theme.primary;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 0px;
+
+                            Text {
+                                // A dot marks a file with unsaved changes, as editors do.
+                                text: tab.dirty ? tab.title + "  •" : tab.title;
+                                color: tab.active ? Theme.foreground : Theme.muted-fg;
+                                font-size: Metrics.text-sm;
+                                font-weight: tab.active ? 600 : 400;
+                                overflow: elide;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+
+                            AppButton {
+                                icon: "close";
+                                tooltip: "Close tab (" + Keys.close-tab + " or middle-click)";
+                                variant: "ghost";
+                                size: "sm";
+                                height: 20px;
+                                clicked => {
+                                    root.tab-close(tab.id);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: 2px;
+
+                    AppButton {
+                        icon: "plus";
+                        tooltip: "New query tab (" + Keys.new-tab + ")";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.tab-new();
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Editor toolbar ───────────────────────────────────────────────────
         Rectangle {
-            min-height: Metrics.toolbar-h;
-            max-height: Metrics.toolbar-h;
+            min-height: Metrics.toolbar-h + 4px;
+            max-height: Metrics.toolbar-h + 4px;
             vertical-stretch: 0;
             background: Theme.card;
             min-width: 0px;
@@ -157,8 +416,8 @@ export component Workspace inherits Rectangle {
             }
 
             HorizontalLayout {
-                padding-left: Metrics.s3;
-                padding-right: Metrics.s2;
+                padding-left: Metrics.s2;
+                padding-right: Metrics.s3;
                 spacing: Metrics.s1;
 
                 VerticalLayout {
@@ -168,22 +427,46 @@ export component Workspace inherits Rectangle {
                     AppButton {
                         label: "Run";
                         icon: "play";
+                        tooltip: "Run the selection, or the statement at the cursor (" + Keys.run + ")";
                         variant: "primary";
                         size: "sm";
-                        enabled: root.connected;
+                        enabled: root.has-target && !root.running && root.sql-text != "";
+                        clicked => {
+                            root.run-current(editor.cursor, editor.anchor);
+                        }
                     }
                 }
 
-                if root.mid: VerticalLayout {
+                VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 0;
 
                     AppButton {
-                        label: "Selection";
-                        icon: "selection";
+                        label: "Run all";
+                        tooltip: "Run the whole script (" + Keys.run-all + " or F5)";
                         variant: "ghost";
                         size: "sm";
-                        enabled: root.connected;
+                        enabled: root.has-target && !root.running && root.sql-text != "";
+                        clicked => {
+                            root.run();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Stop";
+                        icon: "stop";
+                        tooltip: "Ask the server to cancel the running statement";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.running;
+                        clicked => {
+                            root.stop();
+                        }
                     }
                 }
 
@@ -194,15 +477,34 @@ export component Workspace inherits Rectangle {
                     AppButton {
                         label: "Explain";
                         icon: "branch";
+                        tooltip: "Show the plan of the selection or the statement at the cursor, without running it";
                         variant: "ghost";
                         size: "sm";
-                        enabled: root.connected;
+                        enabled: root.has-target && !root.running && root.sql-text != "";
+                        clicked => {
+                            root.explain(editor.cursor, editor.anchor);
+                        }
                     }
                 }
 
-                if root.mid: Divider { }
+                Divider { }
 
-                if root.mid: VerticalLayout {
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        label: "Begin";
+                        variant: "ghost";
+                        size: "sm";
+                        enabled: root.has-target && !root.running && root.txn-state == "idle";
+                        clicked => {
+                            root.txn("BEGIN");
+                        }
+                    }
+                }
+
+                VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 0;
 
@@ -211,11 +513,14 @@ export component Workspace inherits Rectangle {
                         icon: "commit";
                         variant: "ghost";
                         size: "sm";
-                        enabled: false;
+                        enabled: !root.running && root.txn-state == "active";
+                        clicked => {
+                            root.txn("COMMIT");
+                        }
                     }
                 }
 
-                if root.mid: VerticalLayout {
+                VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 0;
 
@@ -224,168 +529,464 @@ export component Workspace inherits Rectangle {
                         icon: "undo";
                         variant: "ghost";
                         size: "sm";
-                        enabled: false;
+                        enabled: !root.running && root.txn-state != "idle";
+                        clicked => {
+                            root.txn("ROLLBACK");
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: 1px;
+                    horizontal-stretch: 0;
+                    background: Theme.border;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        icon: "open";
+                        tooltip: "Open a .sql file in a new tab (" + Keys.open + ")";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.file-open();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        icon: "download";
+                        tooltip: "Save this tab's script (" + Keys.save + "; " + Keys.save-as + " to save as)";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.file-save();
+                        }
+                    }
+                }
+
+                // Shown only while it matters: an open transaction holds locks, a failed one
+                // refuses everything but ROLLBACK.
+                if root.txn-state != "idle": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+                    padding-left: Metrics.s1;
+
+                    Text {
+                        text: root.txn-state == "failed" ? "Transaction failed, roll back" : "In transaction";
+                        color: root.txn-state == "failed" ? Theme.destructive : Theme.warning;
+                        font-size: Metrics.text-sm;
+                        font-weight: 600;
                     }
                 }
 
                 Rectangle { }
 
-                // ── Target breadcrumb ────────────────────────────────────────
-                if root.roomy: VerticalLayout {
+                VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 0;
 
-                    Crumb {
-                        label: root.server-crumb;
-                        icon: "server";
+                    AppButton {
+                        icon: "code";
+                        tooltip: "Lay the script out: keywords upper-case, one clause per line (" + Keys.format + "). Strings, names and comments are untouched.";
+                        variant: "ghost";
+                        size: "sm";
+                        clicked => {
+                            root.format-sql();
+                        }
                     }
                 }
 
-                if root.roomy: VerticalLayout {
+                VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 0;
 
-                    Icon {
-                        name: "chevron-right";
-                        tint: Theme.muted-fg;
-                        size: 10px;
+                    HorizontalLayout {
+                        spacing: 6px;
+
+                        VerticalLayout {
+                            alignment: center;
+
+                            Icon {
+                                name: "database";
+                                tint: root.has-target ? Theme.ent-database : Theme.muted-fg;
+                                size: 12px;
+                            }
+                        }
+
+                        Text {
+                            text: root.has-target ? root.target-label : "No database selected";
+                            color: root.has-target ? Theme.foreground : Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                            font-family: root.has-target ? Metrics.font-mono : Metrics.font-ui;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            max-width: 280px;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Find / replace ───────────────────────────────────────────────────
+        if root.find-open: Rectangle {
+            min-height: root.find-replace ? 68px : 38px;
+            max-height: root.find-replace ? 68px : 38px;
+            background: Theme.card;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            VerticalLayout {
+                padding-left: Metrics.s3;
+                padding-right: Metrics.s3;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                spacing: 4px;
+
+                HorizontalLayout {
+                    spacing: Metrics.s1;
+                    height: 26px;
+
+                    Rectangle {
+                        width: 260px;
+                        horizontal-stretch: 0;
+                        border-radius: Metrics.radius-sm;
+                        border-width: 1px;
+                        border-color: find-input.has-focus ? Theme.primary : Theme.border;
+                        background: Theme.input-bg;
+
+                        find-input := TextInput {
+                            x: 7px;
+                            width: parent.width - 14px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            single-line: true;
+                            text <=> root.find-text;
+                            font-size: Metrics.text-sm;
+                            font-family: Metrics.font-mono;
+                            color: Theme.foreground;
+                            init => {
+                                self.focus();
+                                self.select-all();
+                            }
+                            edited => {
+                                root.find-changed(self.text, root.find-case);
+                            }
+                            accepted => {
+                                root.find-step(true);
+                            }
+                            key-pressed(event) => {
+                                if (event.text == Key.Escape) {
+                                    root.find-open = false;
+                                    return accept;
+                                }
+                                reject
+                            }
+                        }
+
+                        if root.find-text == "": Text {
+                            x: 7px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            text: "Find";
+                            color: Theme.gutter-fg;
+                            font-size: Metrics.text-sm;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+
+                        AppButton {
+                            label: "Aa";
+                            tooltip: root.find-case ? "Match case: on" : "Match case: off";
+                            variant: root.find-case ? "outline" : "ghost";
+                            size: "sm";
+                            clicked => {
+                                root.find-case = !root.find-case;
+                                root.find-changed(root.find-text, root.find-case);
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+
+                        AppButton {
+                            icon: "prev";
+                            tooltip: "Previous match (" + Keys.previous-match + ")";
+                            variant: "ghost";
+                            size: "sm";
+                            clicked => {
+                                root.find-step(false);
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+
+                        AppButton {
+                            icon: "next";
+                            tooltip: "Next match (Enter)";
+                            variant: "ghost";
+                            size: "sm";
+                            clicked => {
+                                root.find-step(true);
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.find-status;
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-xs;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+
+                        AppButton {
+                            label: root.find-replace ? "Hide replace" : "Replace…";
+                            tooltip: root.find-replace ? "" : "Replace (" + Keys.replace-label + ")";
+                            variant: "ghost";
+                            size: "sm";
+                            clicked => {
+                                root.find-replace = !root.find-replace;
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+
+                        AppButton {
+                            icon: "close";
+                            tooltip: "Close (Esc)";
+                            variant: "ghost";
+                            size: "sm";
+                            clicked => {
+                                root.find-open = false;
+                            }
+                        }
                     }
                 }
 
-                if root.roomy: VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
+                if root.find-replace: HorizontalLayout {
+                    spacing: Metrics.s1;
+                    height: 26px;
 
-                    Crumb {
-                        label: root.database-crumb;
-                        icon: "database";
+                    Rectangle {
+                        width: 260px;
+                        horizontal-stretch: 0;
+                        border-radius: Metrics.radius-sm;
+                        border-width: 1px;
+                        border-color: replace-input.has-focus ? Theme.primary : Theme.border;
+                        background: Theme.input-bg;
+
+                        replace-input := TextInput {
+                            x: 7px;
+                            width: parent.width - 14px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            single-line: true;
+                            text <=> root.replace-text;
+                            font-size: Metrics.text-sm;
+                            font-family: Metrics.font-mono;
+                            color: Theme.foreground;
+                            accepted => {
+                                root.replace-one();
+                            }
+                        }
+
+                        if root.replace-text == "": Text {
+                            x: 7px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            text: "Replace with";
+                            color: Theme.gutter-fg;
+                            font-size: Metrics.text-sm;
+                        }
                     }
-                }
 
-                if root.roomy: VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
 
-                    Icon {
-                        name: "chevron-right";
-                        tint: Theme.muted-fg;
-                        size: 10px;
+                        AppButton {
+                            label: "Replace";
+                            variant: "outline";
+                            size: "sm";
+                            enabled: root.find-text != "";
+                            clicked => {
+                                root.replace-one();
+                            }
+                        }
                     }
-                }
 
-                if root.roomy: VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
 
-                    Crumb {
-                        label: root.schema-crumb;
-                        icon: "schema";
+                        AppButton {
+                            label: "Replace all";
+                            variant: "ghost";
+                            size: "sm";
+                            enabled: root.find-text != "";
+                            clicked => {
+                                root.replace-all();
+                            }
+                        }
                     }
+
+                    Rectangle { }
                 }
             }
         }
 
         // ── SQL editor ───────────────────────────────────────────────────────
-        // Sized by stretch factor rather than a fraction of the window: deriving a child's
-        // height from `root.height` inside a layout makes the height depend on the layout that
-        // depends on the height, which Slint reports as a binding loop.
-        Rectangle {
-            vertical-stretch: 44;
-            min-height: 72px;
-            background: Theme.background;
-            clip: true;
-
-            // Gutter and code sit in an explicit left-to-right layout. Placing them as free
-            // children of the Rectangle left their order to absolute coordinates, which put
-            // the line numbers on the wrong side of the code.
-            HorizontalLayout {
-                // ── Line-number gutter ───────────────────────────────────────
-                Rectangle {
-                    min-width: Editor.gutter-w;
-                    max-width: Editor.gutter-w;
-                    background: Theme.chrome;
-
-                    // `border-r border-border/60` — dimmer than a pane edge.
-                    Rectangle {
-                        x: parent.width - 1px;
-                        y: 0;
-                        width: 1px;
-                        height: parent.height;
-                        background: Theme.border.with-alpha(0.6);
-                    }
-
-                    VerticalLayout {
-                        padding-top: Metrics.s3;
-                        alignment: start;
-
-                        for line[index] in root.lines: Rectangle {
-                            height: Editor.line-h;
-
-                            Text {
-                                x: parent.width - self.width - 9px;
-                                y: (parent.height - self.height) / 2;
-                                text: index + 1;
-                                color: Theme.gutter-fg;
-                                font-size: Metrics.text-sm;
-                                font-family: Metrics.font-mono;
-                            }
-                        }
-                    }
+        editor := SqlEditor {
+            vertical-stretch: root.editor-share * 100;
+            layers: root.layers;
+            line-numbers: root.line-numbers;
+            text <=> root.sql-text;
+            caret-moved(at) => {
+                root.caret-moved(at);
+            }
+            edited(text, caret) => {
+                root.edited(text, caret);
+            }
+            completions: root.completions;
+            completion-index <=> root.completion-index;
+            completion-line: root.completion-line;
+            completion-col: root.completion-col;
+            caret-target: root.caret-target;
+            caret-serial: root.caret-serial;
+            select-end: root.select-end;
+            reveal-line: root.reveal-line;
+            reveal-col: root.reveal-col;
+            reveal-serial: root.reveal-serial;
+            find(replace) => {
+                root.find-open = true;
+                root.find-replace = replace;
+                root.find-changed(root.find-text, root.find-case);
+            }
+            format => {
+                root.format-sql();
+            }
+            complete-request(text, caret) => {
+                root.complete-request(text, caret);
+            }
+            complete-accept(i) => {
+                root.complete-accept(i);
+            }
+            complete-cancel => {
+                root.complete-cancel();
+            }
+            run => {
+                if (root.has-target && !root.running) {
+                    root.run();
                 }
-
-                // ── Code column ──────────────────────────────────────────────
-                code := ScrollView {
-                    viewport-height: root.lines.length * Editor.line-h + 2 * Metrics.s3;
-
-                    VerticalLayout {
-                        width: code.visible-width;
-                        padding-top: Metrics.s3;
-                        padding-left: Metrics.s3;
-                        alignment: start;
-
-                        // Each line is drawn as its coloured runs, laid side by side. The runs
-                        // include the whitespace between them, so the line reassembles exactly
-                        // and indentation survives.
-                        for line[index] in root.lines: Rectangle {
-                            height: Editor.line-h;
-
-                            HorizontalLayout {
-                                alignment: start;
-
-                                for token in line.tokens: Text {
-                                    text: token.text;
-                                    color: token.kind == "keyword" ? Theme.sql-keyword
-                                        : token.kind == "string" ? Theme.sql-string
-                                        : token.kind == "comment" ? Theme.sql-comment
-                                        : token.kind == "number" ? Theme.sql-number
-                                        : token.kind == "cast" ? Theme.sql-cast
-                                        : token.kind == "punct" ? Theme.sql-punct
-                                        : Theme.sql-ident;
-                                    font-size: Metrics.text-code;
-                                    font-family: Metrics.font-mono;
-                                    font-weight: token.kind == "keyword" ? 500 : 400;
-                                    font-italic: token.kind == "comment";
-                                    vertical-alignment: center;
-                                }
-                            }
-                        }
-                    }
+            }
+            run-current => {
+                if (root.has-target && !root.running) {
+                    root.run-current(self.cursor, self.anchor);
                 }
+            }
+            new-tab => {
+                root.tab-new();
+            }
+            close-tab => {
+                root.tab-close(-1);
+            }
+            open-file => {
+                root.file-open();
+            }
+            save-file => {
+                root.file-save();
+            }
+            save-file-as => {
+                root.file-save-as();
             }
         }
 
         // ── Splitter ─────────────────────────────────────────────────────────
-        // `h-1 bg-border/60` in the reference: a seam, not a rule.
-        Rectangle {
-            min-height: 3px;
-            max-height: 3px;
+        // A 1px line with a taller grab area, so it is easy to catch without looking heavy.
+        splitter := Rectangle {
+            min-height: 7px;
+            max-height: 7px;
             vertical-stretch: 0;
-            background: Theme.border.with-alpha(0.6);
+            background: split-touch.has-hover || split-touch.pressed ? Theme.primary.with-alpha(0.35) : Colors.transparent;
+
+            Rectangle {
+                y: 3px;
+                height: 1px;
+                width: parent.width;
+                background: Theme.border;
+            }
+
+            // A grip in the middle says the line can be dragged.
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: 1px;
+                width: 36px;
+                height: 5px;
+                border-radius: 2.5px;
+                background: split-touch.has-hover || split-touch.pressed ? Theme.primary : Theme.border;
+            }
+
+            split-touch := TouchArea {
+                mouse-cursor: MouseCursor.row-resize;
+                changed has-hover => {
+                    if (self.has-hover) {
+                        Tip.request("Drag to resize. Double-click to reset.", self.absolute-position.x + self.width / 2,
+                            self.absolute-position.y + self.height);
+                    } else {
+                        Tip.dismiss();
+                    }
+                }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.up) {
+                        root.split-moved(root.editor-share);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        // From where the pointer is, not by adding up deltas: the line moves
+                        // under the pointer while dragging, so deltas would overshoot.
+                        root.editor-share = max(0.12, min(0.85,
+                            (self.absolute-position.y + self.mouse-y - editor.absolute-position.y)
+                                / max(1px, editor.height + results-panel.height)));
+                    }
+                }
+                double-clicked => {
+                    root.editor-share = 0.42;
+                    root.split-moved(root.editor-share);
+                }
+            }
         }
 
         // ── Results panel ────────────────────────────────────────────────────
-        VerticalLayout {
-            vertical-stretch: 56;
+        results-panel := VerticalLayout {
+            vertical-stretch: (1 - root.editor-share) * 100;
 
             Rectangle {
                 min-height: Metrics.toolbar-h;
@@ -401,7 +1002,7 @@ export component Workspace inherits Rectangle {
                 }
 
                 HorizontalLayout {
-                    padding-left: Metrics.s2;
+                    padding-left: Metrics.s1;
                     padding-right: Metrics.s3;
 
                     ResultTab {
@@ -410,6 +1011,17 @@ export component Workspace inherits Rectangle {
                         active-id: root.result-tab;
                         picked => {
                             root.result-tab = "results";
+                        }
+                    }
+
+                    ResultTab {
+                        label: "Messages";
+                        count: root.messages.length > 0 ? root.messages.length : "";
+                        alert: root.has-error;
+                        id: "messages";
+                        active-id: root.result-tab;
+                        picked => {
+                            root.result-tab = "messages";
                         }
                     }
 
@@ -423,122 +1035,782 @@ export component Workspace inherits Rectangle {
                     }
 
                     ResultTab {
-                        label: "Messages";
-                        id: "messages";
+                        label: "Chart";
+                        id: "chart";
                         active-id: root.result-tab;
                         picked => {
-                            root.result-tab = "messages";
+                            root.result-tab = "chart";
+                            root.chart-opened();
                         }
                     }
 
                     ResultTab {
-                        label: "EXPLAIN";
-                        id: "explain";
+                        label: "Pivot";
+                        id: "pivot";
                         active-id: root.result-tab;
                         picked => {
-                            root.result-tab = "explain";
+                            root.result-tab = "pivot";
+                            PivotStore.opened();
+                        }
+                    }
+
+                    ResultTab {
+                        label: "Plan";
+                        id: "plan";
+                        active-id: root.result-tab;
+                        picked => {
+                            root.result-tab = "plan";
+                        }
+                    }
+
+                    ResultTab {
+                        label: "Notifications";
+                        count: root.notify-rows.length > 0 ? root.notify-rows.length : "";
+                        id: "notify";
+                        active-id: root.result-tab;
+                        picked => {
+                            root.result-tab = "notify";
+                        }
+                    }
+
+                    ResultTab {
+                        label: "History";
+                        count: root.history.length > 0 ? root.history.length : "";
+                        id: "history";
+                        active-id: root.result-tab;
+                        picked => {
+                            root.result-tab = "history";
                         }
                     }
 
                     Rectangle { }
 
+                    if root.result-tab == "results" && root.columns.length > 0: HorizontalLayout {
+                        spacing: 2px;
+                        padding-right: Metrics.s2;
+
+                        VerticalLayout {
+                            alignment: center;
+
+                            AppButton {
+                                icon: "copy";
+                                tooltip: "Copy the selected row (tab-separated)";
+                                variant: "ghost";
+                                size: "sm";
+                                enabled: root.selected-row >= 0;
+                                clicked => {
+                                    root.copy-row();
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+
+                            AppButton {
+                                icon: "copy-all";
+                                tooltip: "Copy every row, with the header";
+                                variant: "ghost";
+                                size: "sm";
+                                clicked => {
+                                    root.copy-all();
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+
+                            AppButton {
+                                icon: "download";
+                                tooltip: "Export to CSV or JSON…";
+                                variant: "ghost";
+                                size: "sm";
+                                clicked => {
+                                    root.export();
+                                }
+                            }
+                        }
+                    }
+
+                    // Says why a result cannot be edited; the reason is in its tooltip.
+                    if root.results-read-only != "" && !root.running: Rectangle {
+                        horizontal-stretch: 0;
+                        min-width: ro-label.preferred-width + 2 * Metrics.s2;
+
+                        ro-label := Text {
+                            text: "Read-only";
+                            color: ro-touch.has-hover ? Theme.foreground : Theme.muted-fg;
+                            font-size: Metrics.text-sm;
+                            vertical-alignment: center;
+                        }
+
+                        ro-touch := TouchArea {
+                            changed has-hover => {
+                                if (self.has-hover) {
+                                    Tip.request(root.results-read-only, self.absolute-position.x + self.width / 2,
+                                        self.absolute-position.y + self.height);
+                                } else {
+                                    Tip.dismiss();
+                                }
+                            }
+                        }
+                    }
+
                     Text {
-                        text: root.result-summary;
-                        color: Theme.muted-fg;
+                        text: root.running
+                            ? "Running… " + Math.floor(root.running-tenths / 10) + "." + Math.mod(root.running-tenths, 10) + " s"
+                            : root.result-summary;
+                        color: root.running ? Theme.warning : Theme.muted-fg;
                         font-size: Metrics.text-sm;
+                        font-family: Metrics.font-mono;
                         vertical-alignment: center;
                         horizontal-stretch: 0;
                     }
                 }
             }
 
-            // Column header — present even with no rows, so the grid reads as a grid rather
-            // than as a blank panel.
-            if root.result-tab == "results" && root.columns.length > 0: Rectangle {
-                min-height: Metrics.grid-row-h;
-                max-height: Metrics.grid-row-h;
-                vertical-stretch: 0;
-                background: Theme.chrome;
+            Rectangle {
+                min-height: 60px;
+                clip: true;
 
-                Rectangle {
-                    y: parent.height - 1px;
-                    width: parent.width;
-                    height: 1px;
-                    background: Theme.border;
-                }
-
-                HorizontalLayout {
-                    padding-left: Metrics.s2;
-
-                    for column[index] in root.columns: Rectangle {
-                        width: 128px;
-                        horizontal-stretch: 0;
+                // Results.
+                if root.result-tab == "results" && root.columns.length > 0: VerticalLayout {
+                    // One tab per result set when a script runs several SELECTs.
+                    if root.result-parts.length > 1: Rectangle {
+                        height: 30px;
+                        background: Theme.card;
 
                         Rectangle {
-                            x: parent.width - 1px;
+                            y: parent.height - 1px;
+                            height: 1px;
+                            background: Theme.border;
+                        }
+
+                        HorizontalLayout {
+                            padding-left: Metrics.s2;
+                            spacing: 2px;
+                            alignment: start;
+
+                            for part[i] in root.result-parts: Rectangle {
+                                property <bool> on: i == root.result-part;
+                                width: part-text.preferred-width + 2 * Metrics.s3;
+                                background: self.on ? Theme.background : part-touch.has-hover ? Theme.muted : Colors.transparent;
+
+                                Rectangle {
+                                    y: parent.height - 2px;
+                                    height: 2px;
+                                    background: parent.on ? Theme.primary : Colors.transparent;
+                                }
+
+                                part-text := Text {
+                                    text: part.label + "  ·  " + part.rows;
+                                    color: parent.on ? Theme.foreground : Theme.muted-fg;
+                                    font-size: Metrics.text-sm;
+                                    font-weight: parent.on ? 600 : 400;
+                                    vertical-alignment: center;
+                                }
+
+                                part-touch := TouchArea {
+                                    clicked => {
+                                        root.pick-part(i);
+                                    }
+                                    changed has-hover => {
+                                        if (self.has-hover) {
+                                            Tip.request(part.sql, self.absolute-position.x + self.width / 2,
+                                                self.absolute-position.y + self.height);
+                                        } else {
+                                            Tip.dismiss();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    ResultGrid {
+                        columns: root.columns;
+                        columns-width: root.columns-width;
+                        rows: root.rows;
+                        selected-row <=> root.selected-row;
+                        selected-col <=> root.selected-col;
+                        header-clicked(c) => {
+                            root.sort(c);
+                        }
+                        // The panel, once open, follows the selection; Enter or a
+                        // double-click opens it.
+                        block-changed(r1, c1, r2, c2) => {
+                            SelectionStore.query-block(r1, c1, r2, c2);
+                        }
+                        cell-clicked(r, c) => {
+                            if (root.cell-open) {
+                                root.cell(r, c);
+                            }
+                        }
+                        open-cell(r, c) => {
+                            root.cell(r, c);
+                        }
+                        editable: root.results-editable;
+                        commit-edit(r, c, text) => {
+                            root.cell-commit(r, c, text);
+                        }
+                        save-requested => {
+                            root.save-results();
+                        }
+                        has-hidden: root.has-hidden;
+                        anchor-row <=> root.anchor-row;
+                        anchor-col <=> root.anchor-col;
+                        action(name, r1, c1, r2, c2) => {
+                            root.grid-action(name, r1, c1, r2, c2);
+                        }
+                        paste-text(r, c, text) => {
+                            root.paste-text(r, c, text);
+                        }
+                        col-at(x) => {
+                            return root.col-at(x);
+                        }
+                        column-resized(c, w) => {
+                            root.column-resized(c, w);
+                        }
+                        column-fit(c) => {
+                            root.column-fit(c);
+                        }
+                    }
+
+                    if root.results-error != "": Rectangle {
+                        min-height: 30px;
+                        max-height: 30px;
+                        background: Theme.destructive.with-alpha(0.1);
+
+                        Text {
+                            x: Metrics.s3;
+                            width: parent.width - 2 * Metrics.s3;
+                            height: parent.height;
+                            text: root.results-error;
+                            color: Theme.destructive;
+                            font-size: Metrics.text-sm;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+
+                    // Unsaved edits of the result, in view while they exist.
+                    if root.results-pending > 0: Rectangle {
+                        min-height: 36px;
+                        max-height: 36px;
+                        background: Theme.warning.with-alpha(0.10);
+
+                        Rectangle {
+                            y: 0;
+                            width: parent.width;
+                            height: 1px;
+                            background: Theme.warning.with-alpha(0.4);
+                        }
+
+                        HorizontalLayout {
+                            padding-left: Metrics.s3;
+                            padding-right: Metrics.s2;
+                            spacing: Metrics.s2;
+
+                            Text {
+                                text: root.results-saving ? "Saving…"
+                                    : root.results-pending == 1 ? "1 row changed, not saved yet"
+                                    : root.results-pending + " rows changed, not saved yet";
+                                color: Theme.warning;
+                                font-size: Metrics.text-sm;
+                                vertical-alignment: center;
+                            }
+
+                            Rectangle { }
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 0;
+
+                                AppButton {
+                                    label: "Discard";
+                                    variant: "ghost";
+                                    size: "sm";
+                                    enabled: !root.results-saving;
+                                    clicked => {
+                                        root.discard-results();
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 0;
+
+                                AppButton {
+                                    label: "Save changes";
+                                    tooltip: "Save (" + Keys.save + ")";
+                                    variant: "primary";
+                                    size: "sm";
+                                    enabled: !root.results-saving;
+                                    clicked => {
+                                        root.save-results();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.cell-open: CellViewer {
+                        min-height: root.results-editable ? 132px : 100px;
+                        max-height: root.results-editable ? 132px : 100px;
+                        editable: root.results-editable;
+                        staged: root.cell-staged;
+                        apply(text) => {
+                            root.cell-apply(text);
+                        }
+                        set-null => {
+                            root.cell-set-null();
+                        }
+                        revert => {
+                            root.cell-revert();
+                        }
+                        save-requested => {
+                            root.save-results();
+                        }
+                        column: root.cell-column;
+                        kind: root.cell-kind;
+                        row-number: root.selected-row + 1;
+                        value: root.cell-value;
+                        draft <=> root.cell-draft;
+                        null: root.cell-null;
+                        close => {
+                            root.close-cell();
+                        }
+                    }
+
+                    if root.rows-note != "": Rectangle {
+                        min-height: 24px;
+                        max-height: 24px;
+                        background: Theme.warning.with-alpha(0.1);
+
+                        Text {
+                            x: Metrics.s3;
+                            height: parent.height;
+                            text: root.rows-note;
+                            color: Theme.warning;
+                            font-size: Metrics.text-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if root.result-tab == "results" && root.columns.length == 0: VerticalLayout {
+                    alignment: center;
+                    spacing: Metrics.s3;
+                    padding: Metrics.s4;
+
+                    Text {
+                        text: !root.has-target ? "Choose a database to run against"
+                            : root.has-error ? "The script stopped on an error"
+                            : root.messages.length > 0 ? "The last statement returned no rows"
+                            : "Nothing run yet";
+                        color: Theme.foreground;
+                        font-size: Metrics.text-md;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: !root.has-target ? "Open a server in the navigator on the left and click one of its databases."
+                            : root.has-error ? "See the Messages tab for what the server said."
+                            : root.messages.length > 0 ? "Its outcome is listed under Messages."
+                            : "Press Run, or " + Keys.run + " in the editor.";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    if !root.has-target: HorizontalLayout {
+                        alignment: center;
+
+                        AppButton {
+                            label: "Manage servers";
+                            variant: "outline";
+                            size: "sm";
+                            clicked => {
+                                root.open-servers();
+                            }
+                        }
+                    }
+                }
+
+                // Messages.
+                if root.result-tab == "messages": msgs := ScrollView {
+                    viewport-height: root.messages.length * 46px + Metrics.s2;
+
+                    if root.messages.length == 0: Text {
+                        x: (msgs.visible-width - self.width) / 2;
+                        y: Metrics.s5;
+                        text: "No statements run yet.";
+                        color: Theme.muted-fg;
+                        font-size: Metrics.text-sm;
+                    }
+
+                    for message[i] in root.messages: Rectangle {
+                        x: 0;
+                        y: Metrics.s1 + i * 46px;
+                        width: msgs.visible-width;
+                        height: 46px;
+
+                        Rectangle {
+                            x: Metrics.s3;
+                            y: parent.height - 1px;
+                            width: parent.width - 2 * Metrics.s3;
+                            height: 1px;
+                            background: Theme.border.with-alpha(0.6);
+                        }
+
+                        HorizontalLayout {
+                            padding-left: Metrics.s3;
+                            padding-right: Metrics.s3;
+                            spacing: Metrics.s2;
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 0;
+
+                                Icon {
+                                    name: message.ok ? "commit" : "error";
+                                    tint: message.ok ? Theme.success : Theme.destructive;
+                                    size: 14px;
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    text: message.title;
+                                    color: message.ok ? Theme.foreground : Theme.destructive;
+                                    font-size: Metrics.text-sm;
+                                    font-weight: 500;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: message.detail;
+                                    color: Theme.muted-fg;
+                                    font-size: Metrics.text-xs;
+                                    font-family: Metrics.font-mono;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Text {
+                                text: message.time;
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-xs;
+                                font-family: Metrics.font-mono;
+                                vertical-alignment: center;
+                                horizontal-stretch: 0;
+                            }
+                        }
+                    }
+                }
+
+                if root.result-tab == "pivot": PivotView { }
+
+                if root.result-tab == "chart": ChartView {
+                    columns: root.chart-columns;
+                    kind: root.chart-kind;
+                    x-col: root.chart-x;
+                    y-col: root.chart-y;
+                    series-col: root.chart-series;
+                    agg: root.chart-agg;
+                    order: root.chart-order;
+                    top: root.chart-top;
+                    bars: root.chart-bars;
+                    points: root.chart-points;
+                    slices: root.chart-slices;
+                    legend: root.chart-legend;
+                    joined: root.chart-line != "";
+                    x-ticks: root.chart-x-ticks;
+                    y-ticks: root.chart-y-ticks;
+                    x-title: root.chart-x-title;
+                    y-title: root.chart-y-title;
+                    note: root.chart-note;
+                    set(what, n, t) => {
+                        root.chart-set(what, n, t);
+                    }
+                    copy-data => {
+                        root.chart-copy-data();
+                    }
+                    export-svg => {
+                        root.chart-export();
+                    }
+                    copy-svg => {
+                        root.chart-copy();
+                    }
+                }
+
+                if root.result-tab == "json": TextPane {
+                    text: root.json-text;
+                    empty-text: "Run a query to see its rows as JSON.";
+                }
+
+                if root.result-tab == "plan" && root.plan-rows.length == 0: Text {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    text: "Press Explain to see how the server will run the script.";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                }
+
+                // The plan as a tree: each operator under its parent, with guide lines, so the
+                // order of execution (innermost first) reads at a glance.
+                if root.result-tab == "plan" && root.plan-rows.length > 0: plan := ScrollView {
+                    viewport-height: root.plan-rows.length * 26px + Metrics.s4;
+
+                    for step[i] in root.plan-rows: Rectangle {
+                        x: 0;
+                        y: Metrics.s2 + i * 26px;
+                        width: plan.visible-width;
+                        height: 26px;
+
+                        for level in step.depth: Rectangle {
+                            x: Metrics.s3 + level * 18px + 5px;
                             width: 1px;
                             height: parent.height;
                             background: Theme.border;
                         }
 
                         HorizontalLayout {
-                            padding-left: Metrics.s2;
-                            padding-right: Metrics.s2;
-                            spacing: 4px;
+                            padding-left: Metrics.s3 + step.depth * 18px;
+                            padding-right: Metrics.s3;
+                            spacing: 8px;
 
-                            Text {
-                                text: column.name;
-                                color: Theme.muted-fg;
-                                font-size: Metrics.text-sm;
-                                font-weight: 500;
-                                vertical-alignment: center;
-                                overflow: elide;
+                            if !step.heading: VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 0;
+
+                                Rectangle {
+                                    width: 11px;
+                                    height: 11px;
+                                    border-radius: 2px;
+                                    border-width: 1.5px;
+                                    border-color: step.depth == 0 ? Theme.primary : Theme.info;
+                                }
                             }
 
                             Text {
-                                text: column.kind;
-                                color: Theme.muted-fg;
-                                font-size: 9px;
+                                text: step.op;
+                                color: step.heading ? Theme.muted-fg : Theme.foreground;
+                                font-size: Metrics.text-sm;
+                                font-weight: step.heading ? 400 : 600;
+                                font-family: Metrics.font-mono;
                                 vertical-alignment: center;
                                 horizontal-stretch: 0;
-                                opacity: 0.6;
+                            }
+
+                            Text {
+                                text: step.detail;
+                                color: Theme.muted-fg;
+                                font-size: Metrics.text-sm;
+                                font-family: Metrics.font-mono;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
                             }
                         }
                     }
+                }
 
-                    Rectangle { }
+                if root.result-tab == "notify": NotificationsPanel {
+                    width: parent.width;
+                    height: parent.height;
+                    rows: root.notify-rows;
+                    channels: root.notify-channels;
+                    status: root.notify-status;
+                    failed: root.notify-failed;
+                    has-target: root.has-target;
+                    listen(c) => {
+                        root.notify-listen(c);
+                    }
+                    unlisten(c) => {
+                        root.notify-unlisten(c);
+                    }
+                    notify(c, p) => {
+                        root.notify-send(c, p);
+                    }
+                    clear => {
+                        root.notify-clear();
+                    }
+                }
+
+                if root.result-tab == "history" && root.history.length == 0: Text {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    text: "Scripts you run are kept here, newest first.";
+                    color: Theme.muted-fg;
+                    font-size: Metrics.text-sm;
+                }
+
+                if root.result-tab == "history" && root.history.length > 0: hist := ScrollView {
+                    viewport-height: root.history.length * 46px + Metrics.s2;
+
+                    for entry[i] in root.history: Rectangle {
+                        x: 0;
+                        y: Metrics.s1 + i * 46px;
+                        width: hist.visible-width;
+                        height: 46px;
+                        background: hist-touch.has-hover ? Theme.muted : Colors.transparent;
+
+                        hist-touch := TouchArea {
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => {
+                                root.pick-history(i);
+                            }
+                        }
+
+                        Rectangle {
+                            x: Metrics.s3;
+                            y: parent.height - 1px;
+                            width: parent.width - 2 * Metrics.s3;
+                            height: 1px;
+                            background: Theme.border.with-alpha(0.6);
+                        }
+
+                        HorizontalLayout {
+                            padding-left: Metrics.s3;
+                            padding-right: Metrics.s3;
+                            spacing: Metrics.s2;
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 0;
+
+                                Rectangle {
+                                    width: 7px;
+                                    height: 7px;
+                                    border-radius: 3.5px;
+                                    background: entry.ok ? Theme.success : Theme.destructive;
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    text: entry.title;
+                                    color: Theme.foreground;
+                                    font-size: Metrics.text-sm;
+                                    font-family: Metrics.font-mono;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: entry.meta;
+                                    color: Theme.muted-fg;
+                                    font-size: Metrics.text-xs;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Text {
+                                text: hist-touch.has-hover ? "Load into editor" : "";
+                                color: Theme.primary;
+                                font-size: Metrics.text-xs;
+                                vertical-alignment: center;
+                                horizontal-stretch: 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // No query tab open: a message in the middle instead of an empty editor.
+    if root.tabs.length == 0: Rectangle {
+        y: 30px;
+        height: parent.height - 30px;
+        background: Theme.background;
+
+        // Swallows clicks, so nothing behind it reacts; takes the keyboard for Ctrl+T / Ctrl+O.
+        TouchArea {
+            clicked => {
+                empty-keys.focus();
+            }
+        }
+
+        empty-keys := FocusScope {
+            init => {
+                self.focus();
+            }
+            key-pressed(event) => {
+                if (Keys.primary(event.modifiers.control, event.modifiers.meta) && Keys.is(event.text, "t")) {
+                    root.tab-new();
+                    return accept;
+                }
+                if (Keys.primary(event.modifiers.control, event.modifiers.meta) && Keys.is(event.text, "o")) {
+                    root.file-open();
+                    return accept;
+                }
+                return reject;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: Metrics.s3;
+
+            HorizontalLayout {
+                alignment: center;
+
+                Icon {
+                    name: "code";
+                    size: 28px;
+                    tint: Theme.muted-fg;
                 }
             }
 
-            // Body. Every tab shows the same message until a query has actually run.
-            //
-            // The minimum is set explicitly: wrapped text reports a tall minimum height when
-            // the layout probes it at a narrow width, which would push the status bar off the
-            // bottom of the window.
-            Rectangle {
-                min-height: 60px;
-                clip: true;
+            Text {
+                text: "No query open";
+                color: Theme.foreground;
+                font-size: Metrics.text-lg;
+                font-weight: 600;
+                horizontal-alignment: center;
+            }
 
-                VerticalLayout {
-                    alignment: center;
-                    padding-left: Metrics.s4;
-                    padding-right: Metrics.s4;
-                    spacing: Metrics.s2;
+            Text {
+                text: "Start a new query, open a .sql file, or pick a table in the navigator.";
+                color: Theme.muted-fg;
+                font-size: Metrics.text-sm;
+                horizontal-alignment: center;
+            }
 
-                    Text {
-                        text: root.connected ? "No results yet — run a query."
-                            : "Not connected to a server.";
-                        color: Theme.foreground;
-                        font-size: Metrics.text-md;
-                        horizontal-alignment: center;
+            HorizontalLayout {
+                alignment: center;
+                spacing: Metrics.s2;
+
+                AppButton {
+                    label: "New query";
+                    icon: "plus";
+                    tooltip: Keys.new-tab;
+                    variant: "primary";
+                    clicked => {
+                        root.tab-new();
                     }
+                }
 
-                    Text {
-                        text: "Connect a server to run queries. The editor becomes editable in a later release.";
-                        color: Theme.muted-fg;
-                        font-size: Metrics.text-sm;
-                        horizontal-alignment: center;
-                        wrap: word-wrap;
+                AppButton {
+                    label: "Open file…";
+                    icon: "open";
+                    tooltip: Keys.open;
+                    variant: "outline";
+                    clicked => {
+                        root.file-open();
                     }
                 }
             }

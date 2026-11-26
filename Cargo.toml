@@ -1,5 +1,6 @@
-# NusaDB Studio — the desktop client, built and released on its own so its GPU and windowing
-# dependencies stay out of the engine's build.
+# NusaDB Studio, the desktop client. It is built and released on its own so its GPU and
+# windowing dependencies stay out of the engine's build, and it talks to servers through the
+# published `nusadb` driver over the wire protocol.
 [workspace]
 
 [package]
@@ -13,14 +14,41 @@ publish = false
 
 [dependencies]
 slint = "1"
-# The reference client for the Nusa Wire Protocol, from the engine repository.
-nusadb-libnusa = { git = "https://github.com/nusadb/nusadb" }
+# The published Rust driver for the Nusa Wire Protocol (crates.io, repo nusadb/rust). Studio
+# uses its Tokio API, over TLS when a server asks for it.
+nusadb = { version = "0.1.2", features = ["async-tls"] }
 # The driver is async; Studio's event loop is not. A runtime on a worker thread bridges them —
 # no macros or timers needed, just somewhere for connection futures to run.
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "io-util"] }
+# The saved-server list is a small JSON file in the user's config directory.
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# Native save dialog for exports (Win32 / AppKit / the XDG desktop portal — no GTK needed).
+rfd = "0.18"
+# Excel exports: a maintained pure-Rust writer for the .xlsx format.
+rust_xlsxwriter = { version = "0.104", default-features = false }
+# Passwords the user asks to remember go to the OS keychain: Keychain on macOS, Credential
+# Manager on Windows, Secret Service (GNOME Keyring, KWallet) on Linux — never to servers.json.
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "async-secret-service", "crypto-rust", "tokio"] }
 
 [build-dependencies]
 slint-build = "1"
 
+# Embeds the icon and version information in the Windows executable (also when the build runs
+# on Linux or macOS for a Windows target, through the MinGW `windres`).
+winresource = "0.1"
+
 [lints.clippy]
 unwrap_used = "deny"
+
+# Full debuginfo for the Slint-generated window code needs several GB to compile; line tables
+# keep backtraces readable at a fraction of that.
+# What ships: optimised, thin LTO, symbols stripped. One codegen unit per crate would shave a
+# little more size but needs far more memory to build than the gain is worth.
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+
+[profile.dev]
+debug = "line-tables-only"
